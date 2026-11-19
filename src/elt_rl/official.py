@@ -23,6 +23,7 @@ from .settings import OFFICIAL_NAMES, ConfigurationError
 BENCH_SHA = "3b068d5f15f64541d05fbc33a817e4b08c6bf173"
 MODELS = ("publishers", "customers", "authors")
 CREDENTIAL_FIELDS = ("account", "host", "user", "password", "role", "warehouse")
+CONNECTION_FIELDS = ("account", "host", "user", "role", "warehouse")
 EVALUATOR_FILES = ("eva.py", "eva_stage1.py", "eva_stage2.py", "db_connectors.py",
                    "table.json", "sort_key.json")
 PINNED_PATHS = ("setup/main.tf", "evaluation/sql/books", "elt-bench/snowflake/books",
@@ -143,7 +144,7 @@ class SnowflakeBooksBackend:
 
     def _connection_options(self) -> dict:
         return {
-            **{name: self.credentials[name] for name in CREDENTIAL_FIELDS},
+            **snowflake_connect_options(self.credentials),
             "login_timeout": 15, "network_timeout": self.query_timeout,
             "session_parameters": {"STATEMENT_TIMEOUT_IN_SECONDS": self.query_timeout,
                                    "STATEMENT_QUEUED_TIMEOUT_IN_SECONDS": self.query_timeout,
@@ -298,14 +299,48 @@ def check_airbyte_url(url: str) -> None:
         raise ConfigurationError("use a self-hosted Airbyte public API URL (HTTPS or loopback HTTP)")
 
 
+def snowflake_connect_options(credentials: dict) -> dict:
+    options = {key: credentials[key] for key in CONNECTION_FIELDS}
+    if "private_key_file" in credentials:
+        options.update(authenticator="SNOWFLAKE_JWT", private_key_file=credentials["private_key_file"])
+        if credentials.get("private_key_file_pwd"):
+            options["private_key_file_pwd"] = credentials["private_key_file_pwd"]
+    else:
+        options["password"] = credentials["password"]
+    return options
+
+
 def read_credentials(file: Path) -> dict:
     try:
         credentials = json.loads(file.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         raise ConfigurationError("provide a readable Snowflake credential JSON") from None
     if not isinstance(credentials, dict) or any(not isinstance(credentials.get(key), str)
-                                               or not credentials[key] for key in CREDENTIAL_FIELDS):
-        raise ConfigurationError("Snowflake credential JSON requires " + ", ".join(CREDENTIAL_FIELDS))
+                                               or not credentials[key].strip() for key in CONNECTION_FIELDS):
+        raise ConfigurationError("Snowflake credential JSON requires " + ", ".join(CONNECTION_FIELDS))
+    if "private_key_file" not in credentials:
+        if not isinstance(credentials.get("password"), str) or not credentials["password"].strip():
+            raise ConfigurationError("configure private_key_file for the Snowflake service user")
+        return credentials
+    key_file = credentials["private_key_file"]
+    passphrase = credentials.get("private_key_file_pwd")
+    if (not isinstance(key_file, str) or not key_file.strip() or
+        (passphrase is not None and not isinstance(passphrase, str))):
+        raise ConfigurationError("configure private_key_file and its optional text passphrase")
+    path = (file.resolve().parent / Path(key_file).expanduser()).resolve()
+    try:
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
+
+        pem = path.read_bytes()
+        if not pem.startswith((b"-----BEGIN PRIVATE KEY-----", b"-----BEGIN ENCRYPTED PRIVATE KEY-----")):
+            raise ValueError("expected PKCS#8")
+        key = serialization.load_pem_private_key(pem, passphrase.encode("utf-8") if passphrase else None)
+        if not isinstance(key, RSAPrivateKey) or key.key_size < 2048:
+            raise ValueError("expected RSA")
+    except (OSError, ValueError, TypeError):
+        raise ConfigurationError("Snowflake private_key_file must be a readable RSA PKCS#8 PEM with its correct passphrase") from None
+    credentials["private_key_file"] = str(path)
     return credentials
 
 

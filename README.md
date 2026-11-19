@@ -9,7 +9,7 @@ with scripted token actions. The same episode interface supports an official
 Snowflake `books` rollout and a one-step Tinker LoRA command.
 
 [Implementation design](DESIGN.md) · [Phase 1 evidence](evidence/phase1.txt) ·
-[Integration evidence](evidence/integrations.txt) · [Final handoff](FINAL_HANDOFF.md)
+[Integration evidence](evidence/integrations.txt) · [Final handoff](FINAL_HANDOFF.md) · [Live readiness](evidence/live-readiness.md)
 
 ## Run locally
 
@@ -185,9 +185,14 @@ host with local Airbyte OSS and Docker. Follow the benchmark's setup for
 PostgreSQL, MongoDB, LocalStack and its custom API source. The `books` flat files
 also require access from Airbyte. In that disposable setup checkout, install the
 requirements, supply the private Snowflake JSON and run the upstream setup.
-Use an isolated, least-privilege role with a dedicated warehouse and support
-for creating and dropping its own temporary run databases. The Snowflake JSON
-requires `account`, `host`, `user`, `password`, `role`, and `warehouse`.
+Use an isolated role with a dedicated warehouse and permission to create
+and drop its own transient databases. For a new Snowflake service user,
+configure RSA key-pair authentication. The Snowflake JSON takes `account`,
+`host`, `user`, `role`, `warehouse`, `private_key_file`, and an optional
+`private_key_file_pwd`. The adapter sends the key-pair settings to both the
+Snowflake connector and Airbyte. See [live setup and costs](LIVE_SETUP.md)
+for the operator checklist and how to handle the upstream generator's
+legacy password field.
 The Airbyte workspace must have the pinned connector definitions.
 The read-only local preflight checks each prerequisite independently.
 
@@ -206,8 +211,9 @@ approved. The preflight labels unexecuted checks as unverified.
 ```bash
 # In the disposable ELT-Bench checkout on the approved host
 python -m pip install -r setup/requirements.txt
-bash setup/elt_setup.sh
-python setup/write_config.py --destination snowflake --credential "$ELT_SNOWFLAKE_CREDENTIAL_JSON" --dest "$ELT_PRIVATE_INPUT_ROOT"
+# Prepare the source services and seed books as described in LIVE_SETUP.md
+python setup/setup_airbyte.py
+python setup/write_config.py --destination snowflake --credential "$ELT_GENERATOR_JSON" --dest "$ELT_PRIVATE_INPUT_ROOT"
 
 # In this repository's venv on a supported Cookbook platform
 python -m pip install -e '.[official,cookbook,test]'
@@ -234,6 +240,10 @@ model by default and only needs a local copy of its public tokenizer. Set
 `TINKER_API_KEY` in the environment or ignored local `.env`.
 `TINKER_PROJECT_ID` is optional. The dry-run never constructs a Tinker client
 and reports whether the selected renderer and tokenizer work offline.
+The read-only production check accepted the configured key, reported the
+default model as sampleable and trainable, and permitted reading billing
+metadata. Creating a training session and its project-level write
+permissions remain unverified. [Read-only evidence](evidence/live-readiness.md)
 
 ```bash
 python -m elt_rl.preflight tinker --budget-usd 0.60 --group-size 3

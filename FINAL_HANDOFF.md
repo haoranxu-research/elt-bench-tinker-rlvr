@@ -1,7 +1,9 @@
 # ELT-Bench RLVR audit and handoff
 
 Project at `S:\STARTER\elt-tinker-phase1`. The implementation and submission
-materials are local.
+materials are local. The [live-readiness update](evidence/live-readiness.md)
+records subsequent read-only production Tinker checks and staged official
+assets. This document retains the audit execution history.
 
 ## A. Completed implementations
 
@@ -84,16 +86,17 @@ sampling, backward pass, optimizer call or checkpoint creation was executed.
 
 ## C. Remaining blockers
 
-- **Official `books`.** The live checkout path must be configured. The
-  generated Airbyte `books` input bundle, reachable self-hosted workspace
-  and source services, official Snowflake reference CSVs, and Snowflake
-  credential JSON and warehouse are absent from the configured environment.
+- **Official `books`.** The checkout, Terraform and reference CSVs are
+  configured. The generated Airbyte `books` input bundle, reachable self-hosted
+  workspace and source services, Snowflake credential JSON and warehouse
+  still require setup.
   Actual source sync, dedicated warehouse visibility, and role privileges
   to create, transform, grade and clean up the run-owned databases remain
   unverified.
 - **Tinker.** The default renderer works offline on this Windows host.
-  An authorized live run must confirm the saved key, project access to the
-  hosted model, and current pricing. Genuine reward variation is required.
+  Authentication, billing usage read access, model capabilities and
+  published prices passed read-only production checks. An authorized run
+  must confirm actual session creation. Genuine reward variation is required.
   Equal rewards cause the run to exit before optimizer calls. A live
   checkpoint and measurement of post-update state remain unexecuted.
 - **Submission.** The native Google Doc, GitHub publication, and contact with

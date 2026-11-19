@@ -1,13 +1,16 @@
 """One bounded LoRA update using Cookbook rollouts and training data."""
 
 import asyncio
+import hashlib
+import json
 import math
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, replace
 from importlib.metadata import version
 from pathlib import Path
 
 import tinker
+from tinker.lib.base_url import DEFAULT_BASE_URL
 from tinker_cookbook.completers import TinkerTokenCompleter
 from tinker_cookbook.rl.data_processing import assemble_training_data, compute_advantages
 from tinker_cookbook.rl.rollouts import do_group_rollout
@@ -114,6 +117,22 @@ def observed_usage(evidence: list[dict], datums: list[tinker.Datum]) -> TokenUsa
     )
 
 
+def alignment_evidence(datums: list[tinker.Datum]) -> dict:
+    """Fingerprint the audited targets without storing raw text in the manifest."""
+    digest = hashlib.sha256()
+    action_count = 0
+    for datum in datums:
+        fields = datum.loss_fn_inputs
+        for token, logprob, advantage, mask in zip(
+            fields["target_tokens"].data, fields["logprobs"].data,
+            fields["advantages"].data, fields["mask"].data, strict=True,
+        ):
+            if mask:
+                digest.update(json.dumps([token, logprob, advantage], separators=(",", ":")).encode() + b"\n")
+                action_count += 1
+    return {"aligned_action_tokens": action_count, "aligned_targets_sha256": digest.hexdigest()}
+
+
 def _action_logprobs(output, index: int, datum: tinker.Datum) -> list[float]:
     values = output.loss_fn_outputs[index]["logprobs"].data
     selected = [value for value, advantage in zip(
@@ -125,13 +144,14 @@ def _action_logprobs(output, index: int, datum: tinker.Datum) -> list[float]:
 
 
 async def optimize_once(training_client: tinker.TrainingClient, datums: list[tinker.Datum],
-                        record: Callable[..., None]) -> bool:
+                        record: Callable[..., None], *,
+                        inspect_checkpoint: Callable[[str], Awaitable[dict]] | None = None) -> bool:
     if not datums:
         raise ValueError("training requires nonempty datums")
     send = [replace(datum, loss_fn_inputs={key: value for key, value in datum.loss_fn_inputs.items()
                                            if key != "mask"}) for datum in datums]
     forward_future = training_client.forward_backward(send, LOSS)
-    record(forward_backward={"status": "submitted"})
+    record(forward_backward={"status": "submitted", "request_input_tokens": sum(d.model_input.length for d in send)})
     try:
         async with asyncio.timeout(180):
             forward = await forward_future
@@ -143,7 +163,8 @@ async def optimize_once(training_client: tinker.TrainingClient, datums: list[tin
         record(forward_backward={"status": "failed_or_unconfirmed", "error": type(exc).__name__})
         raise
     record(forward_backward={"status": "completed", "metrics": forward.metrics,
-                             "result_count": len(forward.loss_fn_outputs)})
+                             "result_count": len(forward.loss_fn_outputs),
+                             "request_input_tokens": sum(d.model_input.length for d in send)})
     # Await valid gradients before submitting the only paid optimizer request.
     optim_future = training_client.optim_step(tinker.AdamParams(
         learning_rate=4e-5, beta1=0.9, beta2=0.95, eps=1e-8,
@@ -171,6 +192,14 @@ async def optimize_once(training_client: tinker.TrainingClient, datums: list[tin
     async with asyncio.timeout(180):
         checkpoint = await training_client.save_state("elt-one-step", ttl_seconds=86_400)
     record(checkpoint=checkpoint.path)
+    if inspect_checkpoint is not None:
+        try:
+            async with asyncio.timeout(30):
+                metadata = await inspect_checkpoint(checkpoint.path)
+        except Exception as exc:
+            record(checkpoint_verification={"status": "unverified", "error": type(exc).__name__})
+            return False
+        record(checkpoint_verification={"status": "verified", **metadata})
     return verified
 
 
@@ -199,13 +228,15 @@ async def run_remote(
            token_prices=asdict(prices), estimated_upper_usd=estimate,
            spending_limit_usd=max_usd, actual_spend_usd=None, balance_pre=None, balance_post=None)
     renderer = make_renderer(model, renderer_name, offline=True)
-    capabilities = await tinker.RestClient(api_key=api_key).get_server_capabilities()
+    rest = tinker.RestClient(api_key=api_key, base_url=DEFAULT_BASE_URL)
+    capabilities = await rest.get_server_capabilities()
     supported = next((item for item in capabilities.supported_models if item.model_name == model), None)
     if supported is None or supported.sampleable is False or (train and supported.trainable is False):
         raise ConfigurationError("configured Tinker project does not support this model for the requested action")
     if supported.max_context_length and supported.max_context_length < budget.context:
         raise ConfigurationError("model context length is smaller than the rollout budget")
-    with tinker.ServiceClient(display_name=f"elt-{mode}", api_key=api_key, project_id=project_id) as service:
+    with tinker.ServiceClient(display_name=f"elt-{mode}", api_key=api_key, project_id=project_id,
+                              base_url=DEFAULT_BASE_URL) as service:
         training_client = None
         if train:
             training_client = await service.create_lora_training_client(model, rank=LORA_RANK, seed=seed)
@@ -225,7 +256,8 @@ async def run_remote(
         record(sampling="completed", rewards=group.get_total_rewards(), trajectories=evidence)
         datums = datums_for_group(group, require_provenance=True) if train else []
         usage = observed_usage(evidence, datums)
-        record(observed_token_usage=asdict(usage), estimated_observed_usd=prices.estimate_usd(usage))
+        sample_usage = replace(usage, trained=0)
+        record(sampling_token_usage=asdict(sample_usage), estimated_sampling_usd=prices.estimate_usd(sample_usage))
         if not train:
             submitted = any(turn["metrics"].get("submitted", 0) for item in evidence for turn in item["turns"])
             if any((out / "official").glob("*/cleanup-required.txt")):
@@ -233,12 +265,19 @@ async def run_remote(
                 return 2
             record(status="rollout_submitted" if submitted else "rollout_unsubmitted")
             return 0 if submitted else 2
-        record(training_datum_count=len(datums))
+        record(training_datum_count=len(datums), planned_training_input_tokens=usage.trained,
+               **alignment_evidence(datums))
         if not datums:
             record(status="no_training_signal", reason="constant rewards or no usable datums")
             return 2
         assert training_client is not None
-        verified = await optimize_once(training_client, datums, record)
+        async def inspect_checkpoint(path: str) -> dict:
+            weights = await rest.get_weights_info_by_tinker_path(path)
+            if weights.base_model != model or not weights.is_lora or weights.lora_rank != LORA_RANK:
+                raise RuntimeError("saved checkpoint metadata differs from the expected model or LoRA rank")
+            return {"base_model": weights.base_model, "lora_rank": weights.lora_rank}
+
+        verified = await optimize_once(training_client, datums, record, inspect_checkpoint=inspect_checkpoint)
         record(status="checkpoint_saved" if verified else "checkpoint_saved_state_unverified",
                post_training_evaluation=False)
         return 0 if verified else 2

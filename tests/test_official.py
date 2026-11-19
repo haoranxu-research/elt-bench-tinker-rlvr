@@ -186,6 +186,38 @@ def test_official_success_requires_all_stage2_reports():
         )
 
 
+def test_snowflake_service_key_reaches_connector_and_airbyte(checkout, tmp_path):
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from elt_rl.settings import ConfigurationError
+
+    password = "synthetic-key-passphrase"
+    pem = rsa.generate_private_key(public_exponent=65537, key_size=2048).private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+        serialization.BestAvailableEncryption(password.encode()),
+    )
+    (tmp_path / "service.p8").write_bytes(pem)
+    path = tmp_path / "credentials.json"
+    base = dict.fromkeys(official.CONNECTION_FIELDS, "dummy")
+    base.update(private_key_file="service.p8", private_key_file_pwd=password, password="unused")
+    path.write_text(json.dumps(base), encoding="utf-8")
+    parsed = official.read_credentials(path)
+    options = official.snowflake_connect_options(parsed)
+    assert options["authenticator"] == "SNOWFLAKE_JWT"
+    assert options["private_key_file"] == str(tmp_path / "service.p8")
+    assert "password" not in options
+    bundle = yaml.safe_load((checkout / "elt-bench/snowflake/books/config.yaml").read_text())
+    bundle["Airbyte"]["config"].update(workspace_id="dummy", username="dummy", password="dummy")
+    plan = terraform_plan(bundle, {"postgres": ["address"]}, "ELT_RL_TEST", parsed,
+                          "http://127.0.0.1:1/api/public/v1/")
+    auth = plan["resource"]["airbyte_destination_snowflake"]["books"]["configuration"]["credentials"]
+    assert auth == {"key_pair_authentication": {"private_key": pem.decode(), "private_key_password": password}}
+    base["private_key_file_pwd"] = "wrong"
+    path.write_text(json.dumps(base), encoding="utf-8")
+    with pytest.raises(ConfigurationError, match="correct passphrase"):
+        official.read_credentials(path)
+
+
 def test_ambiguous_snowflake_create_does_not_drop_an_unconfirmed_database(tmp_path, monkeypatch):
     config = official.OfficialConfig(tmp_path, tmp_path, tmp_path, tmp_path / "c",
                                      "http://localhost/api/public/v1", "terraform", tmp_path / "reports")
@@ -257,6 +289,12 @@ def test_terraform_provider_schema(checkout, tmp_path):
     for options in (["init", "-backend=false", "-input=false", "-no-color"], ["validate", "-no-color"]):
         result = subprocess.run([executable, *options], cwd=tmp_path, text=True, capture_output=True, timeout=120)
         assert result.returncode == 0, result.stdout + result.stderr
+    destination = plan["resource"]["airbyte_destination_snowflake"]["books"]["configuration"]
+    destination["credentials"] = {"key_pair_authentication": {"private_key": "schema-test"}}
+    (tmp_path / "pipeline.tf.json").write_text(json.dumps(plan), encoding="utf-8")
+    result = subprocess.run([executable, "validate", "-no-color"], cwd=tmp_path,
+                            text=True, capture_output=True, timeout=120)
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_official_episode_calls_two_isolated_warehouse_replays(checkout, tmp_path, monkeypatch):

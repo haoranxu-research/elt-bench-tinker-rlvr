@@ -89,6 +89,13 @@ def terraform_plan(config: dict, selected: dict[str, list[str]], database: str,
         })
         outputs[key] = ref("airbyte_connection", key, "connection_id")
 
+    if "private_key_file" in credential:
+        key = {"private_key": Path(credential["private_key_file"]).read_text(encoding="ascii")}
+        if credential.get("private_key_file_pwd"):
+            key["private_key_password"] = credential["private_key_file_pwd"]
+        destination_auth = {"key_pair_authentication": key}
+    else:
+        destination_auth = {"username_and_password": {"password": credential["password"]}}
     add("airbyte_destination_snowflake", "books", {
         "name": f"{database}-books", "workspace_id": airbyte["workspace_id"],
         "definition_id": airbyte["snowflake_definition_id"],
@@ -96,7 +103,7 @@ def terraform_plan(config: dict, selected: dict[str, list[str]], database: str,
             "host": credential["host"], "database": database, "schema": "BOOKS",
             "warehouse": credential["warehouse"], "role": credential["role"],
             "username": credential["user"],
-            "credentials": {"username_and_password": {"password": credential["password"]}},
+            "credentials": destination_auth,
         },
     })
     if names := selected.get("postgres"):

@@ -156,12 +156,18 @@ def test_cookbook_rollouts_produce_real_advantages_and_datums(tmp_path):
                 return SimpleNamespace(path="fake-test-checkpoint")
 
         result = {}
-        assert await optimize_once(FakeTrainingClient(), datums, lambda **fields: result.update(fields))
-        assert calls == ["forward_backward", "optim_step", "forward", "save_state"]
+        async def inspect(path):
+            assert path == "fake-test-checkpoint"
+            calls.append("inspect_checkpoint")
+            return {"base_model": "test", "lora_rank": 16}
+        assert await optimize_once(FakeTrainingClient(), datums, lambda **fields: result.update(fields),
+                                   inspect_checkpoint=inspect)
+        assert calls == ["forward_backward", "optim_step", "forward", "save_state", "inspect_checkpoint"]
         assert result["forward_backward"]["result_count"] == len(datums)
         assert result["optim_step"]["status"] == "completed"
         assert result["updated_state"]["status"] == "verified"
         assert result["checkpoint"] == "fake-test-checkpoint"
+        assert result["checkpoint_verification"]["status"] == "verified"
 
         class BrokenBackward(FakeTrainingClient):
             async def forward_backward(self, batch, loss_fn):

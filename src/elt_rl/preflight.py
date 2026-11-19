@@ -19,7 +19,7 @@ from urllib.parse import urlencode
 from .airbyte import AirbyteRun, private_environment
 from .contracts import LORA_RANK, PILOT_BUDGET, PILOT_TURNS
 from .official import (MODELS, check_airbyte_url, check_checkout, read_bundle,
-                       read_credentials)
+                       read_credentials, snowflake_connect_options)
 from .settings import DEFAULT_MODEL, DEFAULT_RENDERER, ConfigurationError, check_model_id, read_settings
 
 
@@ -56,7 +56,7 @@ def _snowflake_probe(credentials: dict, prove_namespace: bool) -> str:
 
     database = "ELT_RL_PREFLIGHT_" + uuid.uuid4().hex.upper()
     with closing(snowflake.connector.connect(
-        **{key: credentials[key] for key in ("account", "host", "user", "password", "role", "warehouse")},
+        **snowflake_connect_options(credentials),
         login_timeout=15, network_timeout=20, session_parameters={"QUERY_TAG": database},
     )) as connection, closing(connection.cursor()) as cursor:
         cursor.execute("SHOW WAREHOUSES", timeout=20)

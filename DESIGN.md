@@ -59,5 +59,6 @@ The episode lifecycle, tool calls and training path stay the same.
 
 The local warehouse path, real Qwen text renderer and Cookbook datum path
 have offline evidence. The pinned evaluator used a synthetic warehouse
-connector in tests. Live Snowflake execution, live Tinker optimization, and
-publication are pending. [Reproduction and evidence](FINAL_HANDOFF.md)
+connector in tests. Read-only production Tinker checks confirmed
+authentication and model capabilities. Live Snowflake execution, live
+Tinker optimization, and publication are pending. [Live readiness](evidence/live-readiness.md)

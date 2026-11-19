@@ -17,7 +17,9 @@ A controlled change to the source data kept the data-derived pipeline at
 1.0 and reduced a hard-coded pipeline from 1.0 to 0.35. The local experiment
 also checks particular row, null, ordering and repeat-execution behaviors.
 
-The remaining grading evidence is a credentialed official `books` rollout
-and one live Tinker optimizer step with post-update verification. The
+Read-only Tinker checks accepted the supplied credential and showed that
+the organization can sample and train the selected model. The remaining
+grading evidence is a credentialed official `books` rollout and one live
+Tinker optimizer step with post-update verification. The
 [design](DESIGN.md) and [handoff](FINAL_HANDOFF.md) document reproduction,
 limitations, and the live commands.
