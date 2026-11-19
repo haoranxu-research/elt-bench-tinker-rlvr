@@ -77,8 +77,10 @@ def test_books_staging_rejects_bad_counts_before_creating_runtime(tmp_path):
               for group in ("postgres", "mongodb", "custom_api")}
     public.update(aws_s3={"data": []}, flat_files=[])
     (book_dir / "config.yaml").write_text(yaml.safe_dump(public), encoding="utf-8")
-    (checkout / "evaluation/table.json").write_text(json.dumps({"books": {name: 1 for name in public
-        if name not in {"aws_s3", "flat_files"}}}), encoding="utf-8")
+    (checkout / "evaluation/table.json").write_text(json.dumps({
+        "books": {name: 1 for name in public if name not in {"aws_s3", "flat_files"}},
+        "address": {"alias": 1},
+    }), encoding="utf-8")
     for name in RUNTIME_FILES:
         file = checkout / name
         file.parent.mkdir(parents=True, exist_ok=True)
@@ -97,10 +99,17 @@ def test_books_staging_rejects_bad_counts_before_creating_runtime(tmp_path):
         stage(checkout, assets, out)
     assert not out.exists()
     input_file.write_text("id\n1\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="data/address/alias.csv"):
+        stage(checkout, assets, out)
+    assert not out.exists()
+    alias = assets / "data-api/data/address/alias.csv"
+    alias.parent.mkdir()
+    alias.write_text("id\n1\n", encoding="utf-8")
     assert stage(checkout, assets, out)["custom_api"] == {"custom_api": 1}
     assert json.loads((out / "setup/mongo.jsonl").read_bytes()) == {"books": ["mongodb"]}
     assert (out / "books-template/config.yaml").read_bytes() == (book_dir / "config.yaml").read_bytes()
     assert (out / "setup/sources/books/data.sh").read_bytes() == b"pinned\n"
+    assert (out / "elt-docker/rest_api/data/address/alias.csv").read_bytes() == alias.read_bytes()
 
 
 def test_books_binding_needs_published_ids_and_excludes_unrelated_secrets(checkout, tmp_path):

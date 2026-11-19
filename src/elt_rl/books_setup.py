@@ -16,6 +16,7 @@ from .official import _read_yaml, check_checkout
 from .settings import ConfigurationError
 
 TASK = Path("elt-bench/snowflake/books")
+CONNECTOR_CHECK_FILE = Path("data/address/alias.csv")
 RUNTIME_FILES = (
     "elt-docker/docker-compose.yml", "elt-docker/rest_api/app.py",
     "elt-docker/rest_api/requirements.txt", "setup/sources/books/data.sh",
@@ -79,6 +80,17 @@ def stage(checkout: Path, assets: Path, out: Path) -> dict:
                 raise ConfigurationError(f"{group}/{name} has {observed} rows; Stage 1 expects {count}")
             source_files[group, name] = file
 
+    # The pinned shared declarative connector uses address/alias in CheckStream.
+    # It is needed for Airbyte's source health check, outside the books stream set.
+    check_file = assets / "data-api" / CONNECTOR_CHECK_FILE
+    count = json.loads((checkout / "evaluation/table.json").read_bytes())["address"]["alias"]
+    try:
+        observed = _row_count(check_file)
+    except (OSError, ValueError, csv.Error):
+        raise ConfigurationError("stage data/address/alias.csv from the official REST archive for the Airbyte check") from None
+    if observed != count:
+        raise ConfigurationError(f"connector check input address/alias has {observed} rows; expected {count}")
+
     out.mkdir(mode=0o700)
     for name in RUNTIME_FILES:
         file = out / name
@@ -98,6 +110,9 @@ def stage(checkout: Path, assets: Path, out: Path) -> dict:
             target = out / "setup/data/books"
         target.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target / source.name)
+    check_target = out / "elt-docker/rest_api" / CONNECTOR_CHECK_FILE
+    check_target.parent.mkdir(parents=True)
+    shutil.copyfile(check_file, check_target)
     (out / "setup/mongo.jsonl").write_text(
         json.dumps({"books": list(expected["mongodb"])}) + "\n", encoding="utf-8")
     shutil.copytree(checkout / TASK, out / "books-template")
@@ -118,6 +133,11 @@ def rest_check(checkout: Path, runtime: Path) -> dict[str, int]:
             thread.start()
             try:
                 opener = build_opener(ProxyHandler({}))
+                check_url = f"http://127.0.0.1:{server.server_port}/address/alias?limit=1&offset=0"
+                with opener.open(check_url, timeout=15) as response:
+                    check = json.load(response)
+                if not isinstance(check, list) or len(check) != 1 or not isinstance(check[0], dict):
+                    raise ConfigurationError("the pinned connector check stream did not return a record")
                 counts = {}
                 for name, expected_count in expected["custom_api"].items():
                     count = 0
