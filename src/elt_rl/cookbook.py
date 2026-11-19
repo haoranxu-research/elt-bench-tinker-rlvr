@@ -13,18 +13,11 @@ from tinker_cookbook.rl.rollout_limits import RolloutLimits
 from tinker_cookbook.rl.types import Env, EnvGroupBuilder, Metrics, RLDataset
 from tinker_cookbook.tool_use import AgentToolMessageEnv, Tool, ToolInput, ToolResult, simple_tool_result
 
-from .contracts import EpisodeConfig, TaskDefinition
+from .contracts import EpisodeConfig, TaskDefinition, TokenBudget
 from .episode import INITIAL_INSTRUCTION, TOOLS, ELTEpisodeState
 from .local import local_task
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class TokenBudget:
-    context: int = 16_384
-    sampled: int = 8_192
-    per_turn: int = 2_048
 
 
 @dataclass
@@ -58,6 +51,7 @@ class ELTMessageEnv(AgentToolMessageEnv):
 
     def __init__(self, episode: ELTEpisodeState, renderer: Renderer):
         self.turn = 0
+        self.finished = False
         tools: list[Tool] = [EpisodeTool(name, lambda: self.turn, episode) for name in TOOLS]
         messages = renderer.create_conversation_prefix_with_tools(
             tools=[tool.to_spec() for tool in tools],
@@ -76,8 +70,12 @@ class ELTMessageEnv(AgentToolMessageEnv):
         )
 
     async def step(self, message: Message) -> MessageStepResult:
+        if self.finished:
+            raise RuntimeError("episode already ended")
         self.turn += 1
-        return await super().step(message)
+        result = await super().step(message)
+        self.finished = result.episode_done
+        return result
 
 
 class ELTGroupBuilder(EnvGroupBuilder):

@@ -192,8 +192,13 @@ class AirbyteRun:
         self._tf("init", "-input=false", "-no-color")
         self.apply_started = True
         self._tf("apply", "-auto-approve", "-input=false", "-no-color", "-parallelism=1")
-        connections = json.loads(self._tf("output", "-json", "connections"))
-        if not isinstance(connections, dict) or set(connections) != set(plan["output"]["connections"]["value"]):
+        try:
+            connections = json.loads(self._tf("output", "-json", "connections"))
+        except ValueError:
+            raise PipelineError("Airbyte returned invalid connection metadata") from None
+        if (not isinstance(connections, dict) or
+            set(connections) != set(plan["output"]["connections"]["value"]) or
+            any(not isinstance(item, str) or not item for item in connections.values())):
             raise PipelineError("Airbyte did not return all connection identifiers")
         for name, identifier in sorted(connections.items()):
             self._sync(name, identifier)

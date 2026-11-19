@@ -1,3 +1,4 @@
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,9 +14,15 @@ class ToolSpec:
     arguments: tuple[str, ...] = ()
 
     def schema(self) -> dict:
+        properties = {key: {"type": "string"} for key in self.arguments}
+        if "content" in properties:
+            properties["content"] = {
+                "type": ["string", "object"],
+                "description": "SQL or JSON text. For load.json, a JSON object is also accepted.",
+            }
         return {
             "type": "object",
-            "properties": {key: {"type": "string"} for key in self.arguments},
+            "properties": properties,
             "required": list(self.arguments),
             "additionalProperties": False,
         }
@@ -79,9 +86,11 @@ class ELTEpisodeState:
     def close(self) -> None:
         with self._lock:
             if not self._closed:
-                self.backend.close()
-                self._temp.cleanup()
                 self._closed = True
+                try:
+                    self.backend.close()
+                finally:
+                    self._temp.cleanup()
 
     def grade(self) -> Grade:
         """Host-only terminal reward. An unsubmitted rollout scores zero."""
@@ -110,6 +119,13 @@ class ELTEpisodeState:
             raise PipelineError("unknown tool")
         if not isinstance(arguments, dict) or set(arguments) != set(spec.arguments):
             raise PipelineError("invalid tool arguments")
+        # The Qwen XML parser decodes a JSON-looking parameter into a Python
+        # object even when the model intended to write that JSON verbatim.
+        if name == "write_pipeline_file" and arguments["path"] == "load.json" and isinstance(arguments["content"], dict):
+            try:
+                arguments = {**arguments, "content": json.dumps(arguments["content"], allow_nan=False)}
+            except (TypeError, ValueError, RecursionError):
+                raise PipelineError("load.json content must be valid JSON") from None
         if any(type(value) is not str for value in arguments.values()):
             raise PipelineError("tool arguments must be strings")
         if name == "read_task":
@@ -190,7 +206,10 @@ class ELTEpisodeState:
         try:
             replay.execute("load", self._read(self.task.load_artifacts))
             replay.execute("transform", self._read(self.task.transform_artifacts))
-            self._grade = self.task.verify(replay)
+            grade = self.task.verify(replay)
         finally:
             replay.close()
+        if not grade.submitted:
+            raise PipelineError("the verifier did not accept this replay")
+        self._grade = grade
         return "pipeline submitted and graded"

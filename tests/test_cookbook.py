@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -106,7 +107,7 @@ def test_cookbook_rollouts_produce_real_advantages_and_datums(tmp_path):
             token_ids = list(json.dumps([next(self.active[key])]).encode())
             assert max_tokens is None or len(token_ids) <= max_tokens
             await asyncio.sleep(0)
-            return TokensWithLogprobs(token_ids, [-0.5] * len(token_ids))
+            return TokensWithLogprobs(token_ids, [-0.5] * len(token_ids), sequence_id="offline-test-sequence")
 
     async def run():
         builder = ELTGroupBuilder(EpisodeConfig(tmp_path), cast(Renderer, ScriptedRenderer()), 2)
@@ -120,7 +121,7 @@ def test_cookbook_rollouts_produce_real_advantages_and_datums(tmp_path):
         assert not builder.episodes
         evidence = group_evidence(group)
         assert all(any(turn["metrics"].get("submitted") for turn in item["turns"]) for item in evidence)
-        datums = datums_for_group(group)
+        datums = datums_for_group(group, require_provenance=True)
         assert datums
         values = [value for datum in datums for value in datum.loss_fn_inputs["advantages"].data]
         assert min(values) < 0 < max(values)
@@ -129,26 +130,90 @@ def test_cookbook_rollouts_produce_real_advantages_and_datums(tmp_path):
         calls = []
 
         class FakeTrainingClient:
+            def result(self, batch, logprob):
+                return SimpleNamespace(metrics={}, loss_fn_outputs=[
+                    {"logprobs": tinker.TensorData(data=[logprob] * datum.model_input.length, dtype="float32")}
+                    for datum in batch
+                ])
+
             def forward_backward(self, batch, loss_fn):
                 assert loss_fn == "importance_sampling"
                 assert batch and all("mask" not in datum.loss_fn_inputs for datum in batch)
                 calls.append("forward_backward")
-                return asyncio.sleep(0, result=SimpleNamespace(metrics={}, loss_fn_outputs=batch))
+                return asyncio.sleep(0, result=self.result(batch, -0.5))
 
             def optim_step(self, params):
                 assert params.learning_rate == 4e-5
                 calls.append("optim_step")
                 return asyncio.sleep(0, result=SimpleNamespace(metrics={}))
 
+            def forward(self, batch, loss_fn):
+                calls.append("forward")
+                return asyncio.sleep(0, result=self.result(batch, -0.51))
+
             async def save_state(self, name, ttl_seconds):
                 calls.append("save_state")
                 return SimpleNamespace(path="fake-test-checkpoint")
 
         result = {}
-        await optimize_once(FakeTrainingClient(), datums, lambda **fields: result.update(fields))
-        assert calls == ["forward_backward", "optim_step", "save_state"]
+        assert await optimize_once(FakeTrainingClient(), datums, lambda **fields: result.update(fields))
+        assert calls == ["forward_backward", "optim_step", "forward", "save_state"]
         assert result["forward_backward"]["result_count"] == len(datums)
         assert result["optim_step"]["status"] == "completed"
+        assert result["updated_state"]["status"] == "verified"
         assert result["checkpoint"] == "fake-test-checkpoint"
+
+        class BrokenBackward(FakeTrainingClient):
+            async def forward_backward(self, batch, loss_fn):
+                raise OSError("synthetic failure")
+
+        calls.clear()
+        result.clear()
+        with pytest.raises(OSError):
+            await optimize_once(BrokenBackward(), datums, lambda **fields: result.update(fields))
+        assert not calls and "optim_step" not in result
+        assert result["forward_backward"]["status"] == "failed_or_unconfirmed"
+
+        class StaticWeights(FakeTrainingClient):
+            def forward(self, batch, loss_fn):
+                return asyncio.sleep(0, result=self.result(batch, -0.5))
+
+        result.clear()
+        assert not await optimize_once(StaticWeights(), datums, lambda **fields: result.update(fields))
+        assert result["updated_state"]["status"] == "inconclusive"
+
+    asyncio.run(run())
+
+
+def test_actual_qwen_renderer_tool_turns_offline(tmp_path):
+    if os.environ.get("ELT_TEST_REAL_RENDERER") != "1":
+        pytest.skip("set ELT_TEST_REAL_RENDERER=1 with the pinned public tokenizer cached")
+    from elt_rl.rendering import make_renderer
+    from elt_rl.settings import DEFAULT_MODEL, DEFAULT_RENDERER
+
+    async def run():
+        renderer = make_renderer(DEFAULT_MODEL, DEFAULT_RENDERER, offline=True)
+        builder = ELTGroupBuilder(EpisodeConfig(tmp_path), renderer, 1)
+        env, = await builder.make_envs()
+        actions = [json.loads(line) for line in TRACE.read_text(encoding="utf-8").splitlines()]
+        saw_bad_query = False
+        try:
+            prompt, stop = await env.initial_observation()
+            assert prompt.length > 0 and stop
+            for action in actions:
+                body = "\n".join(f"<parameter={key}>\n{value}\n</parameter>"
+                                 for key, value in action["arguments"].items())
+                response = (
+                    f"<tool_call>\n<function={action['tool']}>\n{body}\n</function>\n</tool_call><|im_end|>"
+                )
+                tokens = renderer.tokenizer.encode(response, add_special_tokens=False)
+                step = await env.step(tokens)
+                if action["tool"] == "execute_pipeline" and "wrong_amount" in str(step.logs):
+                    assert not step.episode_done
+                    saw_bad_query = True
+            assert saw_bad_query
+            assert step.episode_done and step.reward == 1.0
+        finally:
+            await builder.cleanup()
 
     asyncio.run(run())

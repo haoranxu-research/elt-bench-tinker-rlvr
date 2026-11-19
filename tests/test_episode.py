@@ -227,3 +227,31 @@ def test_duplicate_keys_fail_full_table_comparison(episode):
     assert driver.call("execute_pipeline", stage="transform").text.startswith("transform finished")
     assert driver.call("submit_pipeline").submitted
     assert episode.grade().stage2 == 0.5
+
+
+def test_replay_cleanup_error_cannot_publish_success(tmp_path):
+    from dataclasses import replace
+    from elt_rl.contracts import PipelineError
+
+    task = local_task()
+    closed = []
+
+    def open_backend(path, config):
+        backend = task.open_backend(path, config)
+        if path.name.startswith("submission-"):
+            original = backend.close
+            def close():
+                original()
+                closed.append(path)
+                raise PipelineError("replay cleanup failed")
+            backend.close = close
+        return backend
+
+    with ELTEpisodeState(replace(task, open_backend=open_backend), EpisodeConfig(tmp_path)) as episode:
+        driver = Driver(episode)
+        driver.prepare()
+        driver.call("execute_pipeline", stage="transform")
+        failed = driver.call("submit_pipeline")
+        assert "cleanup failed" in failed.text and not failed.submitted
+        assert episode.grade().reward == 0 and len(closed) == 1
+        assert "earlier turn" in driver.call("submit_pipeline").text

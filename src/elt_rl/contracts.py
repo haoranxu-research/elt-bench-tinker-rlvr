@@ -23,6 +23,18 @@ class EpisodeConfig:
 
 
 @dataclass(frozen=True)
+class TokenBudget:
+    context: int = 16_384
+    sampled: int = 8_192
+    per_turn: int = 2_048
+
+
+PILOT_BUDGET = TokenBudget(context=8192, sampled=4096, per_turn=1024)
+PILOT_TURNS = 18
+LORA_RANK = 16
+
+
+@dataclass(frozen=True)
 class Grade:
     stage1: float = 0.0
     stage2: float = 0.0

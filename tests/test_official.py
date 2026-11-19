@@ -162,6 +162,85 @@ def test_airbyte_job_poll_and_cancel_use_owned_job(tmp_path, monkeypatch):
     assert calls[-1][:2] == ("DELETE", "/jobs/17")
 
 
+def test_airbyte_invalid_terraform_output_is_repairable_and_cleans_up(tmp_path, monkeypatch):
+    run = AirbyteRun(tmp_path / "airbyte", "terraform", "http://localhost/api/public/v1", 1)
+    main = tmp_path / "main.tf"
+    main.touch()
+    calls = []
+    def terraform(command, *args):
+        calls.append(command)
+        return b'{"expected":false}'
+    monkeypatch.setattr(run, "_tf", terraform)
+    with pytest.raises(PipelineError, match="identifiers"):
+        run.provision(main, {"output": {"connections": {"value": {"expected": "ref"}}}}, "dummy", "dummy")
+    run.cleanup()
+    assert calls == ["init", "apply", "output", "destroy"]
+
+
+def test_official_success_requires_all_stage2_reports():
+    with pytest.raises(ValueError, match="omitted"):
+        official._pack_grade(
+            "Success: books schema and tables verified.",
+            {"books": {"authors": {"match": True}}},
+            frozenset({"author"}),
+        )
+
+
+def test_ambiguous_snowflake_create_does_not_drop_an_unconfirmed_database(tmp_path, monkeypatch):
+    config = official.OfficialConfig(tmp_path, tmp_path, tmp_path, tmp_path / "c",
+                                     "http://localhost/api/public/v1", "terraform", tmp_path / "reports")
+    backend = official.SnowflakeBooksBackend(
+        tmp_path, EpisodeConfig(tmp_path), config, {}, {}, frozenset({"author"}),
+    )
+    monkeypatch.setattr(official, "terraform_plan", lambda *args: {})
+    calls = []
+    def broken_sql(statements):
+        calls.extend(statements)
+        raise PipelineError("connection dropped after request")
+    monkeypatch.setattr(backend, "_run_sql", broken_sql)
+    with pytest.raises(PipelineError, match="connection dropped"):
+        backend._load({"mongodb": ["author"]})
+    with pytest.raises(PipelineError, match="outcome is uncertain"):
+        backend._load({"mongodb": ["author"]})
+    with pytest.raises(PipelineError, match="cleanup requires"):
+        backend.close()
+    assert len(calls) == 1 and calls[0].startswith("CREATE TRANSIENT DATABASE")
+    assert backend.database in (backend.report / "cleanup-required.txt").read_text()
+
+
+def test_namespace_probe_cleans_up_when_schema_creation_fails(monkeypatch):
+    import snowflake.connector
+    from elt_rl.preflight import _snowflake_probe
+    from elt_rl.settings import ConfigurationError
+
+    statements = []
+    class Cursor:
+        description = [("name",)]
+
+        def cursor(self):
+            return self
+
+        def close(self):
+            pass
+
+        def __iter__(self):
+            return iter([("DEDICATED",)])
+
+        def execute(self, sql, **kwargs):
+            statements.append(sql)
+            if sql.startswith("CREATE SCHEMA"):
+                raise RuntimeError("synthetic permission denial")
+
+    monkeypatch.setattr(snowflake.connector, "connect", lambda **kwargs: Cursor())
+    creds = {**dict.fromkeys(official.CREDENTIAL_FIELDS, "dummy"), "warehouse": "DEDICATED"}
+    assert "unverified" in _snowflake_probe(creds, False)
+    assert statements == ["SHOW WAREHOUSES"]
+    with pytest.raises(ConfigurationError, match="namespace check failed"):
+        _snowflake_probe(creds, True)
+    created = statements[-3].split()[-1]
+    assert statements[-1] == f"DROP DATABASE {created}"
+
+
 def test_terraform_provider_schema(checkout, tmp_path):
     executable = os.environ.get("ELT_TEST_TERRAFORM")
     if not executable:

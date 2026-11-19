@@ -18,10 +18,15 @@ from urllib.parse import urlsplit
 
 from .airbyte import GROUPS, AirbyteRun, private_environment, select_streams, streams, terraform_plan
 from .contracts import EpisodeConfig, Grade, PipelineError, Stage, TaskDefinition, WarehouseBackend
+from .settings import OFFICIAL_NAMES, ConfigurationError
 
 BENCH_SHA = "3b068d5f15f64541d05fbc33a817e4b08c6bf173"
 MODELS = ("publishers", "customers", "authors")
 CREDENTIAL_FIELDS = ("account", "host", "user", "password", "role", "warehouse")
+EVALUATOR_FILES = ("eva.py", "eva_stage1.py", "eva_stage2.py", "db_connectors.py",
+                   "table.json", "sort_key.json")
+PINNED_PATHS = ("setup/main.tf", "evaluation/sql/books", "elt-bench/snowflake/books",
+                "elt-bench/schemas/books", *(f"evaluation/{name}" for name in EVALUATOR_FILES))
 
 
 @dataclass(frozen=True)
@@ -36,14 +41,12 @@ class OfficialConfig:
     service_timeout: int = 120
 
     @classmethod
-    def from_environment(cls, report_dir: Path) -> "OfficialConfig":
-        names = ("ELT_BENCH_ROOT", "ELT_BOOKS_INPUT_DIR", "ELT_GT_SNOWFLAKE",
-                 "ELT_SNOWFLAKE_CREDENTIAL_JSON", "ELT_AIRBYTE_URL")
-        missing = [name for name in names if not os.environ.get(name)]
+    def from_environment(cls, report_dir: Path, settings: Mapping[str, str] = os.environ) -> "OfficialConfig":
+        missing = [name for name in OFFICIAL_NAMES if not settings.get(name)]
         if missing:
-            raise ValueError("set " + ", ".join(missing))
-        paths = [Path(os.environ[name]).expanduser().resolve() for name in names[:4]]
-        return cls(*paths, os.environ[names[4]], os.environ.get("ELT_TERRAFORM") or "terraform", report_dir)
+            raise ConfigurationError("set " + ", ".join(missing))
+        paths = [Path(settings[name]).expanduser().resolve() for name in OFFICIAL_NAMES[:4]]
+        return cls(*paths, settings[OFFICIAL_NAMES[4]], settings.get("ELT_TERRAFORM") or "terraform", report_dir)
 
 
 def _read_yaml(path: Path) -> dict:
@@ -55,16 +58,27 @@ def _read_yaml(path: Path) -> dict:
     return data
 
 
-def _pinned(config: OfficialConfig) -> None:
+def check_checkout(root: Path) -> None:
     try:
         sha = subprocess.check_output(
-            ["git", "-C", str(config.checkout), "rev-parse", "HEAD"],
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
             text=True, stderr=subprocess.DEVNULL, timeout=10,
         ).strip()
     except (OSError, subprocess.SubprocessError):
-        raise ValueError("ELT_BENCH_ROOT must be a Git checkout") from None
+        raise ConfigurationError("ELT_BENCH_ROOT must be a Git checkout") from None
     if sha != BENCH_SHA:
-        raise ValueError(f"ELT_BENCH_ROOT must be on {BENCH_SHA}")
+        raise ConfigurationError(f"ELT_BENCH_ROOT must be on {BENCH_SHA}")
+    try:
+        subprocess.run(["git", "-C", str(root), "diff", "--quiet", "HEAD", "--", *PINNED_PATHS],
+                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+        untracked = subprocess.check_output(
+            ["git", "-C", str(root), "ls-files", "--others", "--", *PINNED_PATHS],
+            stderr=subprocess.DEVNULL, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        raise ConfigurationError("restore the pinned evaluator and books task files") from None
+    if untracked:
+        raise ConfigurationError("remove extra files from the pinned evaluator or task directories")
 
 
 def _source_sections(root: Path, public_config: dict) -> dict[str, str]:
@@ -96,7 +110,9 @@ def _pack_grade(results_log: str, stage2: dict | None, raw_tables: frozenset[str
         if stage2 is None or not isinstance(stage2.get("books"), dict):
             raise ValueError("official Stage 2 results are missing")
         models = stage2["books"]
-        matched = sum(models.get(name, {}).get("match") is True for name in MODELS)
+        if any(not isinstance(models.get(name), dict) for name in MODELS):
+            raise ValueError("official Stage 2 omitted a required books model")
+        matched = sum(models[name].get("match") is True for name in MODELS)
         return Grade(1, matched / len(MODELS), True, True)
     match = re.search(r"Successful table:\s*(\[[^\]]*\])", line)
     if match is None:
@@ -119,6 +135,7 @@ class SnowflakeBooksBackend:
         self.query_timeout = max(1, int(episode.execution_seconds))
         self.airbyte: AirbyteRun | None = None
         self.created = False
+        self.create_uncertain = False
         self.load_attempts = 0
         self.transform_attempts = 0
         self.report = config.report_dir / self.database
@@ -175,11 +192,15 @@ class SnowflakeBooksBackend:
         return "Snowflake transform finished. " + self.inspect()
 
     def _load(self, selected: dict[str, list[str]]) -> None:
+        if self.create_uncertain:
+            raise PipelineError("warehouse create outcome is uncertain; start a new run after operator review")
         if self.airbyte or self.created:
             self._clear()
         prefix = self.directory / f"airbyte-{uuid.uuid4().hex}"
         plan = terraform_plan(self.bundle, selected, self.database, self.credentials, self.config.airbyte_url)
+        self.create_uncertain = True
         self._run_sql([f"CREATE TRANSIENT DATABASE {self.database}"])
+        self.create_uncertain = False
         self.created = True
         self._run_sql([f"CREATE SCHEMA {self.database}.BOOKS"])
         self.airbyte = AirbyteRun(prefix, self.config.terraform, self.config.airbyte_url, self.config.service_timeout)
@@ -211,22 +232,23 @@ class SnowflakeBooksBackend:
     def close(self) -> None:
         try:
             self._clear()
+            if self.create_uncertain:
+                raise PipelineError("warehouse create outcome was ambiguous")
         except PipelineError:
-            # Preserve only this failed run's private IaC state for manual recovery.
-            if self.airbyte and self.airbyte.directory.is_dir():
-                shutil.copytree(self.airbyte.directory, self.report / "private-recovery",
-                                ignore=shutil.ignore_patterns(".terraform"), dirs_exist_ok=True)
             (self.report / "cleanup-required.txt").write_text(
                 f"Review owned Airbyte resources and Snowflake database {self.database}. "
                 "Keep private-recovery confidential.\n", encoding="utf-8",
             )
+            if self.airbyte and self.airbyte.directory.is_dir():
+                shutil.copytree(self.airbyte.directory, self.report / "private-recovery",
+                                ignore=shutil.ignore_patterns(".terraform"), dirs_exist_ok=True)
+            raise PipelineError("official cleanup requires operator review") from None
 
     def evaluate(self) -> Grade:
         root = self.config.checkout / "evaluation"
         cwd = self.directory / "official-evaluation"
         cwd.mkdir()
-        for name in ("eva.py", "eva_stage1.py", "eva_stage2.py", "db_connectors.py",
-                     "table.json", "sort_key.json"):
+        for name in EVALUATOR_FILES:
             shutil.copyfile(root / name, cwd / name)
         shutil.copytree(root / "sql" / "books", cwd / "sql" / "books")
         credential = cwd / "credential.json"
@@ -267,33 +289,54 @@ def _verify(backend: WarehouseBackend) -> Grade:
     return backend.evaluate()
 
 
-def snowflake_task(config: OfficialConfig, *, allow_paid: bool = False) -> TaskDefinition:
-    if not allow_paid:
-        raise ValueError("official execution requires explicit paid-service approval")
-    _pinned(config)
-    endpoint = urlsplit(config.airbyte_url)
+def check_airbyte_url(url: str) -> None:
+    endpoint = urlsplit(url)
     if (endpoint.scheme not in {"http", "https"} or not endpoint.hostname or endpoint.username or
         endpoint.password or endpoint.query or endpoint.fragment or
         endpoint.path.rstrip("/") != "/api/public/v1" or endpoint.hostname.endswith("airbyte.com") or
         (endpoint.scheme == "http" and endpoint.hostname not in {"localhost", "127.0.0.1", "::1"})):
-        raise ValueError("ELT_AIRBYTE_URL must be a self-hosted Airbyte public API base URL")
-    if not shutil.which(config.terraform):
-        raise ValueError("Terraform executable was not found")
-    public_root = config.checkout / "elt-bench" / "snowflake" / "books"
-    public = _read_yaml(public_root / "config.yaml")
-    bundle = _read_yaml(config.books_input / "config.yaml")
-    available = streams(public)
-    if streams(bundle) != available:
-        raise ValueError("generated input stream manifest differs from the pinned books task")
-    airbyte = bundle["Airbyte"]["config"]
-    if not all(airbyte.get(field) for field in ("username", "password", "workspace_id", "custom_api_definition_id")):
-        raise ValueError("official generated books input is missing Airbyte credentials or definition ID")
-    credentials = json.loads(config.credential_file.read_text(encoding="utf-8"))
+        raise ConfigurationError("use a self-hosted Airbyte public API URL (HTTPS or loopback HTTP)")
+
+
+def read_credentials(file: Path) -> dict:
+    try:
+        credentials = json.loads(file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise ConfigurationError("provide a readable Snowflake credential JSON") from None
     if not isinstance(credentials, dict) or any(not isinstance(credentials.get(key), str)
                                                or not credentials[key] for key in CREDENTIAL_FIELDS):
-        raise ValueError("Snowflake credential JSON requires " + ", ".join(CREDENTIAL_FIELDS))
+        raise ConfigurationError("Snowflake credential JSON requires " + ", ".join(CREDENTIAL_FIELDS))
+    return credentials
+
+
+def read_bundle(root: Path) -> dict:
+    try:
+        bundle = _read_yaml(root / "config.yaml")
+        airbyte = bundle["Airbyte"]["config"]
+        if not all(airbyte.get(field) for field in ("username", "password", "workspace_id", "custom_api_definition_id")):
+            raise ConfigurationError("generate books inputs with the Airbyte workspace credentials and custom definition ID")
+        streams(bundle)
+    except (OSError, KeyError, TypeError, AttributeError):
+        raise ConfigurationError("generate the official books input bundle with setup/write_config.py") from None
+    return bundle
+
+
+def snowflake_task(config: OfficialConfig, *, allow_paid: bool = False) -> TaskDefinition:
+    if not allow_paid:
+        raise ConfigurationError("official execution requires explicit paid-service approval")
+    check_checkout(config.checkout)
+    check_airbyte_url(config.airbyte_url)
+    if not shutil.which(config.terraform):
+        raise ConfigurationError("install Terraform or set ELT_TERRAFORM to its executable")
+    public_root = config.checkout / "elt-bench" / "snowflake" / "books"
+    public = _read_yaml(public_root / "config.yaml")
+    bundle = read_bundle(config.books_input)
+    available = streams(public)
+    if streams(bundle) != available:
+        raise ConfigurationError("generated input stream manifest differs from pinned books")
+    credentials = read_credentials(config.credential_file)
     if any(not (config.ground_truth / "books" / f"{name}.csv").is_file() for name in MODELS):
-        raise ValueError("ELT_GT_SNOWFLAKE must contain official books ground truth CSVs")
+        raise ConfigurationError("ELT_GT_SNOWFLAKE must contain official books ground truth CSVs")
     instructions = (
         "Official ELT-Bench Snowflake task: books. Configure load.json as "
         '{"sources":{"postgres":["address"]}} using the source groups below. '
