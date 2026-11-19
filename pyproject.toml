@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "elt-tinker-phase1"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest==9.2.0"]
+cookbook = [
+    "tinker-cookbook @ git+https://github.com/thinking-machines-lab/tinker-cookbook.git@28de41edfcdd07ba3e7980f35d53a586024a2184",
+]
+
+[project.scripts]
+elt-phase1 = "elt_rl.cli:main"
+
+[tool.setuptools.package-data]
+elt_rl = ["fixture/*.csv", "fixture/*.json", "fixture/*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

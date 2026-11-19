@@ -1,0 +1,73 @@
+Phase 1 executed evidence
+Windows PowerShell, Python 3.12.6, SQLite 3.45.3
+All run commands are relative to the Phase 1 repository root.
+
+Upstream Git checks
+  git -C ../upstream-elt-bench rev-parse HEAD
+  3b068d5f15f64541d05fbc33a817e4b08c6bf173
+  git -C ../upstream-elt-bench symbolic-ref refs/remotes/origin/HEAD
+  refs/remotes/origin/elt_bench++
+  git -C ../upstream-tinker-cookbook rev-parse HEAD
+  28de41edfcdd07ba3e7980f35d53a586024a2184
+  git -C ../upstream-tinker-cookbook describe --tags --exact-match
+  v0.7.0
+
+Credential-free core environment
+  py -3.12 -m venv .venv-core
+  .\.venv-core\Scripts\python.exe -m pip --isolated install -e '.[test]'
+
+Before running the demo and pytest, each command process unset the variable
+names listed in .env.example and set HF_HUB_OFFLINE, TRANSFORMERS_OFFLINE and
+HF_HUB_DISABLE_TELEMETRY to 1. No credential values were read or printed.
+An earlier pytest run using the OS default temp directory hit WinError 5
+under the existing pytest-of-* directory. The commands below use a writable
+basetemp inside the test environment.
+
+  .\.venv-core\Scripts\python.exe -m pytest -q --basetemp .venv-core/pytest-run
+  .....................                                                    [100%]
+  21 passed, 1 skipped in 1.47s
+
+The skipped item was the optional Cookbook smoke test, which is separate
+from the dependency-free core install.
+
+  .\.venv-core\Scripts\python.exe -m elt_rl.cli examples/customer_orders.jsonl
+  02 write_pipeline_file: saved load.json
+  03 execute_pipeline: load finished. raw_customers=4, raw_orders=4
+  04 write_pipeline_file: saved customer_totals.sql
+  05 write_pipeline_file: saved order_totals.sql
+  06 execute_pipeline: ERROR: order_totals.sql: no such column: wrong_amount
+  07 write_pipeline_file: saved order_totals.sql
+  08 execute_pipeline: transform finished. customer_totals=4, order_totals=1, raw_customers=4, raw_orders=4
+  09 inspect_warehouse: customer_totals=4, order_totals=1, raw_customers=4, raw_orders=4
+  10 submit_pipeline: pipeline submitted and graded
+  {"reward": 1.0, "stage1": 1.0, "stage2": 1.0, "stage2_ran": 1, "submitted": 1}
+
+  .\.venv-core\Scripts\python.exe -m compileall -q src tests
+  Exit 0.
+  .\.venv-core\Scripts\python.exe -m pip --isolated wheel --no-deps --wheel-dir .venv-core/wheels .
+  Built elt_tinker_phase1-0.1.0-py3-none-any.whl.
+  Zip listing confirmed both source CSVs, the task specification and verifier targets.
+
+Pinned Cookbook offline smoke test
+  The following full dependency probe exited 1:
+  .\.venv\Scripts\python.exe -m pip --isolated install --dry-run ../upstream-tinker-cookbook
+  ERROR: No matching distribution found for tml-renderers>=0.4.1
+
+  py -3.12 -m venv .venv
+  .\.venv\Scripts\python.exe -m pip --isolated install -e '.[test]'
+  .\.venv\Scripts\python.exe -m pip --isolated install --no-deps ../upstream-tinker-cookbook
+  .\.venv\Scripts\python.exe -m pip --isolated install tinker==0.39.2 chz==0.4.0 numpy==2.5.5 pillow==13.0.0 rich==15.0.0 termcolor==3.3.0
+  The focused install omitted unused full-package dependencies. The smoke test
+  used CPU PyTorch 2.11.0+cpu from the base Python installation.
+
+  .\.venv\Scripts\python.exe -c 'from pathlib import Path; import sys; sys.path.append(str(Path(sys.base_prefix) / ""Lib"" / ""site-packages"")); import pytest; raise SystemExit(pytest.main([""-q"", ""--basetemp"", "".venv/pytest-shared-torch""]))'
+  ......................                                                   [100%]
+  22 passed in 9.43s
+
+The scripted test used the pinned Cookbook's token Env, sequential tool
+dispatcher and group builder interface. It asserted terminal rewards 1.0
+and 0.0 for independent submitted and unfinished episodes.
+
+Phase 1 used no paid API, model sampling, warehouse cloud connection or
+optimization call. The credentialed official rollout and Tinker optimizer
+step remain pending review and separate authorization.

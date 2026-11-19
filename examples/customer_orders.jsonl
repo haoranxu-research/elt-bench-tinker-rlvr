@@ -1,0 +1,10 @@
+{"tool":"read_task","arguments":{}}
+{"tool":"write_pipeline_file","arguments":{"path":"load.json","content":"{\"sources\": {\"customers.csv\": null, \"orders.csv\": null}}"}}
+{"tool":"execute_pipeline","arguments":{"stage":"load"}}
+{"tool":"write_pipeline_file","arguments":{"path":"customer_totals.sql","content":"SELECT c.customer_id, c.name, COUNT(o.order_id) AS order_count, COALESCE(SUM(o.amount), 0.0) AS total_amount FROM raw_customers c LEFT JOIN raw_orders o ON c.customer_id = o.customer_id GROUP BY c.customer_id, c.name"}}
+{"tool":"write_pipeline_file","arguments":{"path":"order_totals.sql","content":"SELECT COUNT(*) AS order_count, AVG(wrong_amount) AS average_amount FROM raw_orders"}}
+{"tool":"execute_pipeline","arguments":{"stage":"transform"}}
+{"tool":"write_pipeline_file","arguments":{"path":"order_totals.sql","content":"SELECT COUNT(*) AS order_count, AVG(amount) AS average_amount FROM raw_orders"}}
+{"tool":"execute_pipeline","arguments":{"stage":"transform"}}
+{"tool":"inspect_warehouse","arguments":{}}
+{"tool":"submit_pipeline","arguments":{}}

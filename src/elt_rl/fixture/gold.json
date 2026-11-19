@@ -1,0 +1,15 @@
+{
+  "raw_counts": {"raw_customers": 4, "raw_orders": 4},
+  "models": {
+    "customer_totals": {
+      "columns": ["customer_id", "name", "order_count", "total_amount"],
+      "key_index": 0,
+      "rows": [[1, "Ada", 2, 23.25], [2, "Lin", 1, 6.25], [3, "Sam", 0, 0.0], [4, null, 1, 9.25]]
+    },
+    "order_totals": {
+      "columns": ["order_count", "average_amount"],
+      "key_index": 0,
+      "rows": [[4, 9.6875]]
+    }
+  }
+}
