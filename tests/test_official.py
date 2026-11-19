@@ -10,6 +10,7 @@ yaml = pytest.importorskip("yaml", reason="install the official extra")
 pytest.importorskip("sqlglot", reason="install the official extra")
 
 from elt_rl import official
+from elt_rl.books_setup import AIRBYTE_FIELDS, RUNTIME_FILES, bind_airbyte, stage
 from elt_rl.airbyte import AirbyteRun, select_streams, streams, terraform_plan
 from elt_rl.contracts import EpisodeConfig, Grade, PipelineError
 from elt_rl.episode import ELTEpisodeState
@@ -29,6 +30,8 @@ def test_official_books_public_task_and_airbyte_plan(checkout, tmp_path, monkeyp
     public = yaml.safe_load((checkout / "elt-bench/snowflake/books/config.yaml").read_text())
     public["Airbyte"]["config"].update(username="example", password="host-airbyte-secret${literal}",
                                        workspace_id="workspace", custom_api_definition_id="connector")
+    public["postgres"]["config"]["host"] = "untrusted-host"
+    public["Airbyte"]["config"]["namespace_definition"] = "source"
     (tmp_path / "config.yaml").write_text(yaml.safe_dump(public))
     cred = {field: f"host-{field}-secret" for field in official.CREDENTIAL_FIELDS}
     (tmp_path / "credentials.json").write_text(json.dumps(cred))
@@ -41,6 +44,8 @@ def test_official_books_public_task_and_airbyte_plan(checkout, tmp_path, monkeyp
     with pytest.raises(ValueError, match="approval"):
         official.snowflake_task(config)
     task = official.snowflake_task(config, allow_paid=True)
+    assert task.open_backend.keywords["bundle"]["postgres"]["config"]["host"] == "elt-postgres"
+    assert task.open_backend.keywords["bundle"]["Airbyte"]["config"]["namespace_definition"] == "destination"
     public_task = task.instructions + "\n".join(task.sections.values())
     assert "host-password-secret" not in public_task and "host-airbyte-secret" not in public_task
     assert len(task.sections) == 8 and task.task_id == "books"
@@ -60,6 +65,66 @@ def test_official_books_public_task_and_airbyte_plan(checkout, tmp_path, monkeyp
     assert plan["resource"]["airbyte_destination_snowflake"]["books"]["configuration"]["schema"] == "BOOKS"
     with pytest.raises(PipelineError):
         select_streams('{"sources":{"postgres":["../gold"]}}', available)
+
+
+def test_books_staging_rejects_bad_counts_before_creating_runtime(tmp_path):
+    checkout = tmp_path / "checkout"
+    book_dir = checkout / "elt-bench/snowflake/books"
+    book_dir.mkdir(parents=True)
+    (checkout / "elt-bench/schemas/books").mkdir(parents=True)
+    (checkout / "evaluation").mkdir()
+    public = {group: {"config": {"tables": [group], "sync_mode": "full_refresh_append"}}
+              for group in ("postgres", "mongodb", "custom_api")}
+    public.update(aws_s3={"data": []}, flat_files=[])
+    (book_dir / "config.yaml").write_text(yaml.safe_dump(public), encoding="utf-8")
+    (checkout / "evaluation/table.json").write_text(json.dumps({"books": {name: 1 for name in public
+        if name not in {"aws_s3", "flat_files"}}}), encoding="utf-8")
+    for name in RUNTIME_FILES:
+        file = checkout / name
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text("pinned", encoding="utf-8")
+    assets = tmp_path / "assets"
+    db = assets / "data-db/data/books"
+    api = assets / "data-api/data/books"
+    for folder in (db, api):
+        folder.mkdir(parents=True)
+    (db / "postgres.csv").write_text("id\n1\n", encoding="utf-8")
+    (db / "mongodb.csv").write_text("id\n1\n", encoding="utf-8")
+    input_file = api / "custom_api.csv"
+    input_file.write_text("id\n1\n2\n", encoding="utf-8")
+    out = tmp_path / "runtime"
+    with pytest.raises(ValueError, match="Stage 1 expects 1"):
+        stage(checkout, assets, out)
+    assert not out.exists()
+    input_file.write_text("id\n1\n", encoding="utf-8")
+    assert stage(checkout, assets, out)["custom_api"] == {"custom_api": 1}
+    assert json.loads((out / "setup/mongo.jsonl").read_bytes()) == {"books": ["mongodb"]}
+    assert (out / "books-template/config.yaml").read_bytes() == (book_dir / "config.yaml").read_bytes()
+
+
+def test_books_binding_needs_published_ids_and_excludes_unrelated_secrets(checkout, tmp_path):
+    import uuid
+
+    credential = tmp_path / "airbyte.json"
+    out = tmp_path / "books"
+    values = {field: "example" for field in AIRBYTE_FIELDS.values()}
+    credential.write_text(json.dumps(values), encoding="utf-8")
+    with pytest.raises(ValueError, match="definition UUIDs"):
+        bind_airbyte(checkout, credential, out)
+    assert not out.exists()
+    values.update(workspace_id=str(uuid.uuid4()), api_definition_id=str(uuid.uuid4()), extra="omit-this")
+    credential.write_text(json.dumps(values), encoding="utf-8")
+    bind_airbyte(checkout, credential, out)
+    bound = official.read_bundle(out)
+    assert bound["Airbyte"]["config"]["custom_api_definition_id"] == values["api_definition_id"]
+    assert "omit-this" not in (out / "config.yaml").read_text()
+
+
+def test_failed_stage2_models_cannot_receive_full_credit():
+    results = {name: {"status": "ok", "match": True} for name in official.MODELS}
+    results["authors"]["status"] = "error"
+    grade = official._pack_grade("Success: books schema and tables verified.", {"books": results}, frozenset())
+    assert grade.stage1 == 1 and grade.stage2 == pytest.approx(2 / 3)
 
 
 @pytest.mark.parametrize("query", [

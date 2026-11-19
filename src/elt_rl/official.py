@@ -24,6 +24,7 @@ BENCH_SHA = "3b068d5f15f64541d05fbc33a817e4b08c6bf173"
 MODELS = ("publishers", "customers", "authors")
 CREDENTIAL_FIELDS = ("account", "host", "user", "password", "role", "warehouse")
 CONNECTION_FIELDS = ("account", "host", "user", "role", "warehouse")
+AIRBYTE_BINDINGS = ("username", "password", "workspace_id", "custom_api_definition_id")
 EVALUATOR_FILES = ("eva.py", "eva_stage1.py", "eva_stage2.py", "db_connectors.py",
                    "table.json", "sort_key.json")
 PINNED_PATHS = ("setup/main.tf", "evaluation/sql/books", "elt-bench/snowflake/books",
@@ -59,7 +60,7 @@ def _read_yaml(path: Path) -> dict:
     return data
 
 
-def check_checkout(root: Path) -> None:
+def check_checkout(root: Path, *, extra_paths: tuple[str, ...] = ()) -> None:
     try:
         sha = subprocess.check_output(
             ["git", "-C", str(root), "rev-parse", "HEAD"],
@@ -70,10 +71,11 @@ def check_checkout(root: Path) -> None:
     if sha != BENCH_SHA:
         raise ConfigurationError(f"ELT_BENCH_ROOT must be on {BENCH_SHA}")
     try:
-        subprocess.run(["git", "-C", str(root), "diff", "--quiet", "HEAD", "--", *PINNED_PATHS],
+        paths = (*PINNED_PATHS, *extra_paths)
+        subprocess.run(["git", "-C", str(root), "diff", "--quiet", "HEAD", "--", *paths],
                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
         untracked = subprocess.check_output(
-            ["git", "-C", str(root), "ls-files", "--others", "--", *PINNED_PATHS],
+            ["git", "-C", str(root), "ls-files", "--others", "--", *paths],
             stderr=subprocess.DEVNULL, timeout=10,
         )
     except (OSError, subprocess.SubprocessError):
@@ -113,7 +115,8 @@ def _pack_grade(results_log: str, stage2: dict | None, raw_tables: frozenset[str
         models = stage2["books"]
         if any(not isinstance(models.get(name), dict) for name in MODELS):
             raise ValueError("official Stage 2 omitted a required books model")
-        matched = sum(models[name].get("match") is True for name in MODELS)
+        matched = sum(models[name].get("status") == "ok" and models[name].get("match") is True
+                      for name in MODELS)
         return Grade(1, matched / len(MODELS), True, True)
     match = re.search(r"Successful table:\s*(\[[^\]]*\])", line)
     if match is None:
@@ -210,7 +213,8 @@ class SnowflakeBooksBackend:
             self.airbyte.provision(self.config.checkout / "setup" / "main.tf", plan,
                                    airbyte_auth["username"], airbyte_auth["password"])
         finally:
-            (self.report / "airbyte-jobs.json").write_text(json.dumps(self.airbyte.jobs), encoding="utf-8")
+            (self.report / f"airbyte-jobs-{self.load_attempts}.json").write_text(
+                json.dumps(self.airbyte.jobs), encoding="utf-8")
 
     def inspect(self) -> str:
         if not self.created:
@@ -266,14 +270,22 @@ class SnowflakeBooksBackend:
         finally:
             credential.unlink(missing_ok=True)
         files = cwd / "agent_results" / "graded"
-        stage1 = (files / "results.log").read_text(encoding="utf-8")
-        (self.report / "results.log").write_text(stage1, encoding="utf-8")
-        stage2_file = files / "stage2.json"
-        stage2 = json.loads(stage2_file.read_text(encoding="utf-8")) if stage2_file.exists() else None
-        grade = _pack_grade(stage1, stage2, self.raw_tables)
+        try:
+            stage1 = (files / "results.log").read_text(encoding="utf-8")
+            (self.report / "results.log").write_text(stage1, encoding="utf-8")
+            stage2_file = files / "stage2.json"
+            stage2 = json.loads(stage2_file.read_text(encoding="utf-8")) if stage2_file.exists() else None
+            if stage2 is not None and (not isinstance(stage2, dict) or set(stage2) - {"books"}):
+                raise ValueError("unexpected Stage 2 scope")
+            models = (stage2 or {}).get("books", {})
+            if not isinstance(models, dict) or any(not isinstance(result, dict) for result in models.values()):
+                raise ValueError("invalid Stage 2 verdicts")
+            grade = _pack_grade(stage1, stage2, self.raw_tables)
+        except (OSError, ValueError, SyntaxError, TypeError):
+            raise PipelineError("official evaluator returned missing or invalid results") from None
         if stage2 is not None:
             # Upstream error strings can contain statements and connection details.
-            for result in stage2["books"].values():
+            for result in models.values():
                 if "error" in result:
                     result["error"] = "see official evaluator diagnostics on the private host"
             (self.report / "stage2.json").write_text(json.dumps(stage2, indent=2), encoding="utf-8")
@@ -348,11 +360,11 @@ def read_bundle(root: Path) -> dict:
     try:
         bundle = _read_yaml(root / "config.yaml")
         airbyte = bundle["Airbyte"]["config"]
-        if not all(airbyte.get(field) for field in ("username", "password", "workspace_id", "custom_api_definition_id")):
-            raise ConfigurationError("generate books inputs with the Airbyte workspace credentials and custom definition ID")
+        if not all(isinstance(airbyte.get(field), str) and airbyte[field].strip() for field in AIRBYTE_BINDINGS):
+            raise ConfigurationError("bind books inputs with the Airbyte workspace credentials and custom definition ID")
         streams(bundle)
     except (OSError, KeyError, TypeError, AttributeError):
-        raise ConfigurationError("generate the official books input bundle with setup/write_config.py") from None
+        raise ConfigurationError("generate the official books input bundle with elt_rl.books_setup bind-airbyte") from None
     return bundle
 
 
@@ -365,10 +377,14 @@ def snowflake_task(config: OfficialConfig, *, allow_paid: bool = False) -> TaskD
         raise ConfigurationError("install Terraform or set ELT_TERRAFORM to its executable")
     public_root = config.checkout / "elt-bench" / "snowflake" / "books"
     public = _read_yaml(public_root / "config.yaml")
-    bundle = read_bundle(config.books_input)
+    bound = read_bundle(config.books_input)
     available = streams(public)
-    if streams(bundle) != available:
+    if streams(bound) != available:
         raise ConfigurationError("generated input stream manifest differs from pinned books")
+    # Only the local Airbyte workspace binding is variable. Source addresses,
+    # connector IDs and the destination namespace come from the verified checkout.
+    private = bound["Airbyte"]["config"]
+    public["Airbyte"]["config"].update({name: private[name] for name in AIRBYTE_BINDINGS})
     credentials = read_credentials(config.credential_file)
     if any(not (config.ground_truth / "books" / f"{name}.csv").is_file() for name in MODELS):
         raise ConfigurationError("ELT_GT_SNOWFLAKE must contain official books ground truth CSVs")
@@ -385,6 +401,6 @@ def snowflake_task(config: OfficialConfig, *, allow_paid: bool = False) -> TaskD
     raw_tables = frozenset(name for group in available.values() for name in group)
     return TaskDefinition(
         "books", instructions, ("load.json",), tuple(f"{name}.sql" for name in MODELS),
-        partial(SnowflakeBooksBackend, config=config, bundle=bundle, credentials=credentials, raw_tables=raw_tables),
+        partial(SnowflakeBooksBackend, config=config, bundle=public, credentials=credentials, raw_tables=raw_tables),
         _verify, _source_sections(config.checkout, public),
     )

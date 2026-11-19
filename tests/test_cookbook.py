@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -16,6 +17,7 @@ from tinker_cookbook.renderers.base import Message, ParseTermination, Renderer, 
 
 from elt_rl.contracts import EpisodeConfig
 from elt_rl.cookbook import ELTGroupBuilder
+from elt_rl.local import local_task
 
 TRACE = Path(__file__).resolve().parents[1] / "examples" / "customer_orders.jsonl"
 
@@ -79,6 +81,29 @@ def test_cookbook_token_env_group(tmp_path):
             await builder.cleanup()
         assert not builder.episodes
         assert all(not path.exists() for path in workspaces)
+
+    asyncio.run(run())
+
+
+def test_official_tool_trace_retains_feedback_even_without_submission(tmp_path):
+    async def run():
+        builder = ELTGroupBuilder(
+            EpisodeConfig(tmp_path), cast(Renderer, ScriptedRenderer()), 1,
+            task_factory=lambda: replace(local_task(), task_id="books"), evidence_dir=tmp_path,
+        )
+        env, = await builder.make_envs()
+        await env.initial_observation()
+        try:
+            action = [{"tool": "write_pipeline_file", "arguments": {"path": "load.json", "content": "{}"}}]
+            await env.step(list(json.dumps(action).encode()))
+            await env.step(list(b"[]"))
+        finally:
+            await builder.cleanup()
+        trace, = tmp_path.glob("*.tools.jsonl")
+        record = json.loads(trace.read_bytes())
+        assert record["turn"] == 1 and record["tool"] == action[0]["tool"]
+        assert record["arguments"] == action[0]["arguments"]
+        assert record["feedback"] == "ERROR: call read_task first" and not record["submitted"]
 
     asyncio.run(run())
 

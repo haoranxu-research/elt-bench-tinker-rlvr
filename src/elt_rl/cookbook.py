@@ -1,6 +1,7 @@
 """Optional Cookbook environment integration. Importing it creates no API client."""
 
 import asyncio
+import json
 import logging
 import shutil
 from collections.abc import Callable, Sequence
@@ -25,6 +26,7 @@ class EpisodeTool:
     name: str
     turn: Callable[[], int]
     episode: ELTEpisodeState
+    trace_file: Path | None = None
 
     @property
     def description(self) -> str:
@@ -38,9 +40,15 @@ class EpisodeTool:
         return {"name": self.name, "description": self.description, "parameters": self.parameters_schema}
 
     async def run(self, input: ToolInput) -> ToolResult:
+        turn = self.turn()
         feedback = await asyncio.to_thread(
-            self.episode.dispatch, self.name, input.arguments, turn=self.turn(),
+            self.episode.dispatch, self.name, input.arguments, turn=turn,
         )
+        if self.trace_file is not None:
+            with self.trace_file.open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps({"turn": turn, "tool": self.name, "call_id": input.call_id,
+                                         "arguments": input.arguments, "feedback": feedback.text,
+                                         "submitted": feedback.submitted}) + "\n")
         return simple_tool_result(
             feedback.text, call_id=input.call_id or "", name=self.name, should_stop=feedback.submitted,
         )
@@ -49,10 +57,10 @@ class EpisodeTool:
 class ELTMessageEnv(AgentToolMessageEnv):
     """Reuse the Cookbook's dispatcher while tracking the feedback turn explicitly."""
 
-    def __init__(self, episode: ELTEpisodeState, renderer: Renderer):
+    def __init__(self, episode: ELTEpisodeState, renderer: Renderer, trace_file: Path | None = None):
         self.turn = 0
         self.finished = False
-        tools: list[Tool] = [EpisodeTool(name, lambda: self.turn, episode) for name in TOOLS]
+        tools: list[Tool] = [EpisodeTool(name, lambda: self.turn, episode, trace_file) for name in TOOLS]
         messages = renderer.create_conversation_prefix_with_tools(
             tools=[tool.to_spec() for tool in tools],
             system_prompt=INITIAL_INSTRUCTION,
@@ -102,8 +110,11 @@ class ELTGroupBuilder(EnvGroupBuilder):
             for _ in range(self.group_size):
                 episode = ELTEpisodeState(self.task_factory(), self.config)
                 self.episodes.append(episode)
+                trace_file = None
+                if self.evidence_dir is not None and episode.task.task_id == "books":
+                    trace_file = self.evidence_dir / f"{episode.workspace.name}.tools.jsonl"
                 envs.append(EnvFromMessageEnv(
-                    self.renderer, ELTMessageEnv(episode, self.renderer),
+                    self.renderer, ELTMessageEnv(episode, self.renderer, trace_file),
                     failed_parse_reward=0.0, context_overflow_reward=0.0,
                     rollout_limits=RolloutLimits(
                         max_turns=self.config.max_turns,
