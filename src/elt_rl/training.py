@@ -5,12 +5,13 @@ import hashlib
 import json
 import math
 from collections.abc import Awaitable, Callable
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from importlib.metadata import version
 from pathlib import Path
 
 import tinker
 from tinker.lib.base_url import DEFAULT_BASE_URL
+from tinker.lib.retry_handler import RetryConfig
 from tinker_cookbook.completers import TinkerTokenCompleter
 from tinker_cookbook.rl.data_processing import assemble_training_data, compute_advantages
 from tinker_cookbook.rl.rollouts import do_group_rollout
@@ -21,9 +22,30 @@ from .contracts import LORA_RANK, PILOT_BUDGET, EpisodeConfig, TaskDefinition, T
 from .cookbook import ELTDataset, ELTGroupBuilder
 from .rendering import QWEN_TOKENIZER_REVISION, make_renderer
 from .settings import DEFAULT_MODEL, DEFAULT_RENDERER, ConfigurationError
+from .tinker_once import single_attempt_sdk
 
 COOKBOOK_SHA = "28de41edfcdd07ba3e7980f35d53a586024a2184"
 LOSS = "importance_sampling"
+
+
+@dataclass
+class RecordedTokenCompleter(TinkerTokenCompleter):
+    trace_file: Path | None = None
+
+    async def __call__(self, model_input, stop, *, max_tokens=None):
+        sample = await super().__call__(model_input, stop, max_tokens=max_tokens)
+        logprobs = sample.logprobs
+        if (len(sample.tokens) != len(logprobs) or not all(math.isfinite(p) for p in logprobs)
+            or (sample.tokens and not sample.sequence_id)):
+            raise RuntimeError("sample returned missing or invalid behavior log probabilities or provenance")
+        if self.trace_file is not None:
+            with self.trace_file.open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps({
+                    "sequence_id": sample.sequence_id, "tokens": sample.tokens, "logprobs": logprobs,
+                    "stop_reason": sample.stop_reason, "prompt_tokens": model_input.length,
+                    "prefill_cached_tokens": sample.prompt_cache_hit_tokens,
+                }, allow_nan=False) + "\n")
+        return sample
 
 
 def datums_for_group(group: TrajectoryGroup, *, require_provenance: bool = False) -> list[tinker.Datum]:
@@ -235,17 +257,25 @@ async def run_remote(
         raise ConfigurationError("configured Tinker project does not support this model for the requested action")
     if supported.max_context_length and supported.max_context_length < budget.context:
         raise ConfigurationError("model context length is smaller than the rollout budget")
-    with tinker.ServiceClient(display_name=f"elt-{mode}", api_key=api_key, project_id=project_id,
-                              base_url=DEFAULT_BASE_URL) as service:
+    with single_attempt_sdk(), tinker.ServiceClient(
+        display_name=f"elt-{mode}", api_key=api_key, project_id=project_id, base_url=DEFAULT_BASE_URL,
+    ) as service:
+        record(submission_attempts_per_request=1, session_creation="started")
         training_client = None
         if train:
             training_client = await service.create_lora_training_client(model, rank=LORA_RANK, seed=seed)
-            sampling_client = await training_client.save_weights_and_get_sampling_client()
+            record(session_url=service.get_console_url(), session_creation="completed")
+            sampling_client = await training_client.save_weights_and_get_sampling_client(
+                retry_config=RetryConfig(enable_retry_logic=False),
+            )
         else:
-            sampling_client = await service.create_sampling_client(base_model=model)
-        record(session_url=service.get_console_url())
-        policy = TinkerTokenCompleter(sampling_client, max_tokens=budget.per_turn,
-                                      temperature=0.8, context_window=budget.context)
+            sampling_client = await service.create_sampling_client(
+                base_model=model, retry_config=RetryConfig(enable_retry_logic=False),
+            )
+            record(session_url=service.get_console_url(), session_creation="completed")
+        policy = RecordedTokenCompleter(sampling_client, max_tokens=budget.per_turn,
+                                        temperature=0.8, context_window=budget.context,
+                                        trace_file=out / "sampled-actions.jsonl")
         dataset = ELTDataset(ELTGroupBuilder(
             config, renderer, members, task_factory=lambda: task, budget=budget, evidence_dir=out / "pipelines",
         ))
@@ -253,7 +283,8 @@ async def run_remote(
         record(sampling="started")
         group = await do_group_rollout(builder, policy)
         evidence = group_evidence(group)
-        record(sampling="completed", rewards=group.get_total_rewards(), trajectories=evidence)
+        record(sampling="completed", rewards=group.get_total_rewards(), trajectories=evidence,
+               sampled_actions_verified=True)
         datums = datums_for_group(group, require_provenance=True) if train else []
         usage = observed_usage(evidence, datums)
         sample_usage = replace(usage, trained=0)

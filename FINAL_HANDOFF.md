@@ -3,7 +3,9 @@
 Project at `S:\STARTER\elt-tinker-phase1`. The implementation and submission
 materials are local. The [live-readiness update](evidence/live-readiness.md)
 records subsequent read-only production Tinker checks and staged official
-assets. This document retains the audit execution history.
+assets. The [authorized Tinker pilot](evidence/tinker-pilot.md) subsequently
+completed one genuine optimizer step with checkpoint verification. This
+document retains the audit execution history.
 
 ## A. Completed implementations
 
@@ -93,12 +95,10 @@ sampling, backward pass, optimizer call or checkpoint creation was executed.
   Actual source sync, dedicated warehouse visibility, and role privileges
   to create, transform, grade and clean up the run-owned databases remain
   unverified.
-- **Tinker.** The default renderer works offline on this Windows host.
-  Authentication, billing usage read access, model capabilities and
-  published prices passed read-only production checks. An authorized run
-  must confirm actual session creation. Genuine reward variation is required.
-  Equal rewards cause the run to exit before optimizer calls. A live
-  checkpoint and measurement of post-update state remain unexecuted.
+- **Tinker.** The authorized pilot completed the optimizer and checkpoint
+  checks using local SQLite rewards. Its published-rate token estimate
+  is available. The immediate read-only billing check returned no session
+  rows. [Pilot evidence](evidence/tinker-pilot.md)
 - **Submission.** The native Google Doc, GitHub publication, and contact with
   the professor remain pending authorization.
 
@@ -113,17 +113,15 @@ sampling, backward pass, optimizer call or checkpoint creation was executed.
 2. After usage approval, run one bounded official rollout. Retain its
    manifest, Airbyte job log, Stage 1 results and, if the gate passes, Stage 2
    output. Inspect the run for `cleanup-required.txt`.
-3. After Tinker usage approval, run the local SQLite training pilot. Retain the
-   manifest, actual sampling rewards, datum count, confirmed forward/backward
-   and optimizer results, post-update probe, and checkpoint. Compare billing
-   against the recorded session. There is no automatic paid retry.
+3. The authorized Tinker pilot is complete. Retain its manifest, sampling
+   rewards, datum count, forward/backward and optimizer receipts, post-update
+   probe, and checkpoint metadata. Reconcile billing against the recorded
+   session when usage is posted. Any further run requires separate approval.
 
 ```bash
 python -m elt_rl.preflight official --airbyte-probe --snowflake-probe --namespace-probe
 python -m elt_rl.run official-rollout --allow-paid --allow-warehouse --budget-usd 1 --out runs/books-001
 
-python -m elt_rl.preflight tinker --budget-usd 0.60 --group-size 3
-python -m elt_rl.run train-one --allow-paid --budget-usd 0.60 --group-size 3 --out runs/tinker-001
 ```
 
 The budgets estimate token costs using the public rate card. The official

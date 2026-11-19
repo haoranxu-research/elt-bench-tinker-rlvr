@@ -9,7 +9,7 @@ with scripted token actions. The same episode interface supports an official
 Snowflake `books` rollout and a one-step Tinker LoRA command.
 
 [Implementation design](DESIGN.md) · [Phase 1 evidence](evidence/phase1.txt) ·
-[Integration evidence](evidence/integrations.txt) · [Final handoff](FINAL_HANDOFF.md) · [Live readiness](evidence/live-readiness.md)
+[Integration evidence](evidence/integrations.txt) · [Final handoff](FINAL_HANDOFF.md) · [Live Tinker pilot](evidence/tinker-pilot.md)
 
 ## Run locally
 
@@ -234,6 +234,10 @@ The dollar estimate controls Tinker tokens. Warehouse costs depend on the
 operator's Snowflake resource monitor and Airbyte deployment.
 
 ## One Tinker LoRA update
+
+The authorized live pilot completed one optimizer step and verified the
+checkpoint. It used three live rollouts on the local SQLite fixture.
+[Executed pilot evidence](evidence/tinker-pilot.md)
 
 The pilot trains on the local fixture. It uses the hosted `Qwen/Qwen3.5-4B`
 model by default and only needs a local copy of its public tokenizer. Set

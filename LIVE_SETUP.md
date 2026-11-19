@@ -17,8 +17,9 @@ reference token estimate is USD 0.4904. The run manifest records the rates
 used for the final estimate. Checkpoint storage and finalized billing are separate.
 [Published rates](https://tinker-docs.thinkingmachines.ai/tinker/models/models_and_pricing/)
 
-After explicit approval, run this once from the project root on the tested
-Windows environment. The launcher uses the existing base Python CPU PyTorch.
+The [authorized pilot](evidence/tinker-pilot.md) ran this command once from
+the project root on Windows. The launcher uses the existing base Python CPU
+PyTorch. Repeating the command for a new pilot requires separate approval.
 
 ```powershell
 .\.venv\Scripts\python.exe -c 'from pathlib import Path; import sys,runpy; sys.path.append(str(Path(sys.base_prefix) / ""Lib"" / ""site-packages"")); runpy.run_module(""elt_rl.run"", run_name=""__main__"")' train-one --allow-paid --budget-usd 0.60 --group-size 3 --out runs/tinker-001

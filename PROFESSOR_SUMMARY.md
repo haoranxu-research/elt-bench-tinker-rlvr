@@ -17,9 +17,11 @@ A controlled change to the source data kept the data-derived pipeline at
 1.0 and reduced a hard-coded pipeline from 1.0 to 0.35. The local experiment
 also checks particular row, null, ordering and repeat-execution behaviors.
 
-Read-only Tinker checks accepted the supplied credential and showed that
-the organization can sample and train the selected model. The remaining
-grading evidence is a credentialed official `books` rollout and one live
-Tinker optimizer step with post-update verification. The
+The production Tinker pilot completed one optimizer step. Three live
+rollouts earned 1.0, 0.0 and 1.0 and yielded six aligned training datums.
+The post-update forward probe measured a change in action log probabilities,
+and checkpoint metadata matched the base model and LoRA rank. This
+establishes the update on local SQLite rewards. A credentialed official
+`books` rollout remains outstanding. The
 [design](DESIGN.md) and [handoff](FINAL_HANDOFF.md) document reproduction,
 limitations, and the live commands.

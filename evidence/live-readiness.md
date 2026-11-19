@@ -1,5 +1,9 @@
 # Read-only live acceptance checks
 
+The subsequent authorized pilot completed one production optimizer step.
+See [live pilot evidence](tinker-pilot.md) for the receipts and checkpoint
+verification. This file records the preceding read-only checks.
+
 Checks on 2026-11-19 UTC from the local project. The credential was read
 from the ignored environment file. No principal identity, billing rows,
 or credential value was retained.

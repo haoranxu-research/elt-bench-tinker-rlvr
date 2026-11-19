@@ -59,6 +59,7 @@ The episode lifecycle, tool calls and training path stay the same.
 
 The local warehouse path, real Qwen text renderer and Cookbook datum path
 have offline evidence. The pinned evaluator used a synthetic warehouse
-connector in tests. Read-only production Tinker checks confirmed
-authentication and model capabilities. Live Snowflake execution, live
-Tinker optimization, and publication are pending. [Live readiness](evidence/live-readiness.md)
+connector in tests. The production Tinker pilot completed one LoRA optimizer
+step using local SQLite rewards, measured a post-update log-probability
+change, and verified checkpoint metadata. The official Snowflake rollout and
+publication remain pending. [Pilot evidence](evidence/tinker-pilot.md)

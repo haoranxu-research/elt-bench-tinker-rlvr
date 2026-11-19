@@ -223,3 +223,34 @@ def test_actual_qwen_renderer_tool_turns_offline(tmp_path):
             await builder.cleanup()
 
     asyncio.run(run())
+
+
+def test_pilot_sdk_does_not_resubmit_transport_or_backpressure(monkeypatch):
+    import httpx
+    from tinker._client import AsyncTinker
+    from tinker.lib.internal_client_holder import InternalClientHolder
+    from tinker.lib.public_interfaces.sampling_client import SamplingClient
+    from elt_rl.tinker_once import single_attempt_sdk
+
+    async def run():
+        calls = []
+
+        async def transport_failure():
+            calls.append("transport")
+            raise httpx.ConnectError("synthetic")
+
+        async def backpressure(*args, **kwargs):
+            calls.append("sample")
+            return None
+
+        monkeypatch.setattr(SamplingClient, "_send_asample_request", backpressure)
+        with single_attempt_sdk():
+            with pytest.raises(httpx.ConnectError):
+                await InternalClientHolder.execute_with_retries(None, transport_failure)
+            with pytest.raises(RuntimeError, match="resubmission is disabled"):
+                await SamplingClient._send_asample_request(None)
+            async with AsyncTinker(api_key="tml-synthetic", max_retries=3) as client:
+                assert client.max_retries == 0
+        assert calls == ["transport", "sample"]
+
+    asyncio.run(run())
