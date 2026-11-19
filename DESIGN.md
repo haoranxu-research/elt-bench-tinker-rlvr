@@ -32,13 +32,19 @@ Stage 1 is the fraction of required raw tables with the correct row count.
 Only complete Stage 1 success permits Stage 2, which measures matching
 transformed models. The terminal training reward weights the stage fractions
 35% and 65%. The official adapter executes the pinned evaluator in a private
-directory. The local verifier compares full row content by key and checks
+directory against the replay database. A missing or malformed evaluator
+report prevents submission. Stage 2 errors earn no credit for their model.
+The local verifier compares full row content by key and checks
 duplicates, nulls, and numeric tolerance.
 
 The tool surface has no shell or arbitrary file access. Source IDs and
 tables are allowlisted. Local SQL uses a SQLite authorizer. Official SQL is
 validated as a single SELECT over approved raw tables. Credentials and
-ground truth remain on the host. Artifact, feedback, action, query and
+ground truth remain on the host. The private Airbyte bundle binds only the
+workspace and custom definition. Routing and the namespace policy come from
+the pinned public config. Private reports retain attempted tool calls with
+their feedback and record Airbyte jobs separately for each load attempt.
+Artifact, feedback, action, query and
 rollout budgets limit work. Changed-input checks can expose some answers
 that coincidentally match the original fixture.
 
@@ -62,4 +68,6 @@ have offline evidence. The pinned evaluator used a synthetic warehouse
 connector in tests. The production Tinker pilot completed one LoRA optimizer
 step using local SQLite rewards, measured a post-update log-probability
 change, and verified checkpoint metadata. The official Snowflake rollout and
-publication remain pending. [Pilot evidence](evidence/tinker-pilot.md)
+publication remain pending. The 15 official inputs matched Stage 1 counts,
+and local PostgreSQL, MongoDB, and REST checks exercised 11 of those streams.
+[Pilot evidence](evidence/tinker-pilot.md) [Books runtime evidence](evidence/books-runtime.md)

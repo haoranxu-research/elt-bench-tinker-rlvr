@@ -50,6 +50,9 @@ test doubles. [Pilot command and reconciliation steps](../LIVE_SETUP.md#tinker-p
 
 ## Official Snowflake books
 
+See the later [runtime audit](books-runtime.md) for real PostgreSQL, MongoDB,
+and loopback REST execution and the current blockers.
+
 Read only the three published references from the pinned dataset into
 ignored `runs/books-assets/gt_snowflake/books/`. [Dataset revision](https://huggingface.co/datasets/tttjjj/elt_bench/tree/1ed5861e60b00a67746e02541139af50c903df6b/gt_snowflake/books)
 

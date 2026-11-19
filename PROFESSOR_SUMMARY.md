@@ -21,7 +21,12 @@ The production Tinker pilot completed one optimizer step. Three live
 rollouts earned 1.0, 0.0 and 1.0 and yielded six aligned training datums.
 The post-update forward probe measured a change in action log probabilities,
 and checkpoint metadata matched the base model and LoRA rank. This
-establishes the update on local SQLite rewards. A credentialed official
-`books` rollout remains outstanding. The
-[design](DESIGN.md) and [handoff](FINAL_HANDOFF.md) document reproduction,
-limitations, and the live commands.
+establishes the update on local SQLite rewards.
+
+For the official `books` task, all 15 staged inputs match the pinned Stage 1
+row counts. The pinned seed scripts populated a real local PostgreSQL instance
+and MongoDB replica set, and the pinned REST app served all three streams over
+HTTP. A credentialed official rollout remains outstanding. It requires a
+Docker-backed Airbyte workspace with the published connector and an authorized
+Snowflake service account and warehouse. [Design](DESIGN.md)
+[Executed runtime evidence](evidence/books-runtime.md) [Setup and handoff](LIVE_SETUP.md)

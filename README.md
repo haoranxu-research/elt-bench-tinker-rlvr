@@ -174,64 +174,44 @@ One approved rollout uses one Snowflake database for work and a separate
 database for replay. Both have the `BOOKS` schema. All resources are run-owned,
 Airbyte schedules are manual, and the host polls only the syncs it creates.
 The official CLI runs in a private copy of the evaluator with a fresh results
-folder. The output includes sanitized tabular grading evidence, submitted
-artifacts and sync provenance. A cleanup failure leaves a
+folder. The output includes sanitized tabular grading evidence, a private
+tool trace, submitted artifacts and per-attempt sync provenance. A cleanup failure leaves a
 `cleanup-required.txt` file and may retain credential-bearing Terraform state
 in `private-recovery`. Keep the entire run directory private and review cleanup
 notices before using the result.
 
-Before an approved run, use a disposable checkout at the pinned SHA on a
-host with local Airbyte OSS and Docker. Follow the benchmark's setup for
-PostgreSQL, MongoDB, LocalStack and its custom API source. The `books` flat files
-also require access from Airbyte. In that disposable setup checkout, install the
-requirements, supply the private Snowflake JSON and run the upstream setup.
-Use an isolated role with a dedicated warehouse and permission to create
-and drop its own transient databases. For a new Snowflake service user,
-configure RSA key-pair authentication. The Snowflake JSON takes `account`,
-`host`, `user`, `role`, `warehouse`, `private_key_file`, and an optional
-`private_key_file_pwd`. The adapter sends the key-pair settings to both the
-Snowflake connector and Airbyte. See [live setup and costs](LIVE_SETUP.md)
-for the operator checklist and how to handle the upstream generator's
-legacy password field.
-The Airbyte workspace must have the pinned connector definitions.
-The read-only local preflight checks each prerequisite independently.
+The local runtime audit validated all 15 inputs, exercised the three REST
+streams over loopback HTTP, and seeded and queried the official PostgreSQL
+tables and MongoDB collections using local servers. A Docker engine, the
+Airbyte workspace and custom connector binding, and authorized Snowflake
+service credentials are still required for a live transfer and evaluation.
+[Executed runtime evidence](evidence/books-runtime.md)
+
+Follow the [official setup and cost guide](LIVE_SETUP.md#official-snowflake-books)
+to stage the assets, start the source services, publish the Airbyte connector,
+and create the private `books/config.yaml` using `elt_rl.books_setup bind-airbyte`.
+The Airbyte binding is separate from the Snowflake RSA service credential.
+Keep both under an ignored private directory or outside the checkout.
 
 ```bash
 python -m elt_rl.preflight official
 ```
 
-After authorization, add `--airbyte-probe` to inspect the self-hosted workspace
-and its official custom source. That probe uses read-only Airbyte requests.
-It cannot establish that all source streams will sync. Add
-`--snowflake-probe` to check login and warehouse visibility, and
-`--namespace-probe` to also exercise create/drop with an isolated transient
-database. Omit those flags on a machine where service access has not been
-approved. The preflight labels unexecuted checks as unverified.
+With authorized service access, use `--airbyte-probe` for workspace and
+custom-source visibility and `--snowflake-probe` for login and warehouse
+visibility. The separately authorized `--namespace-probe` exercises create/drop.
+Actual sync and grading happen during the live rollout.
 
 ```bash
-# In the disposable ELT-Bench checkout on the approved host
-python -m pip install -r setup/requirements.txt
-# Prepare the source services and seed books as described in LIVE_SETUP.md
-python setup/setup_airbyte.py
-python setup/write_config.py --destination snowflake --credential "$ELT_GENERATOR_JSON" --dest "$ELT_PRIVATE_INPUT_ROOT"
-
-# In this repository's venv on a supported Cookbook platform
-python -m pip install -e '.[official,cookbook,test]'
-export ELT_BENCH_ROOT=/absolute/path/to/pinned-benchmark
-export ELT_BOOKS_INPUT_DIR="$ELT_PRIVATE_INPUT_ROOT/books"
-export ELT_GT_SNOWFLAKE=/absolute/path/to/private/gt_snowflake
-export ELT_AIRBYTE_URL=http://127.0.0.1:8000/api/public/v1/
+python -m pip install -e '.[official,cookbook]'
 python -m elt_rl.run official-rollout --allow-paid --allow-warehouse --budget-usd 1 --out runs/books-001
 ```
 
-Set `ELT_SNOWFLAKE_CREDENTIAL_JSON` and `TINKER_API_KEY` through your private
-environment or the ignored local `.env` before running. The process environment
-takes precedence. `ELT_GT_SNOWFLAKE` must contain the original
-`books/*.csv` reference files from the [pinned benchmark's ground-truth instructions](https://github.com/uiuc-kang-lab/ELT-Bench/blob/3b068d5f15f64541d05fbc33a817e4b08c6bf173/README.md#download-the-ground-truth).
-For each counted backend instance, execution is limited to two load attempts
-and four warehouse transform attempts. Submission permits one separate replay.
-The dollar estimate controls Tinker tokens. Warehouse costs depend on the
-operator's Snowflake resource monitor and Airbyte deployment.
+Set `ELT_SNOWFLAKE_CREDENTIAL_JSON` and `TINKER_API_KEY` through the private
+environment or ignored local `.env`. One backend permits two load attempts
+and four warehouse transform attempts. Submission allows one separate replay.
+The runner checks the Tinker token estimate. The Snowflake warehouse has a
+separate budget and resource monitor.
 
 ## One Tinker LoRA update
 

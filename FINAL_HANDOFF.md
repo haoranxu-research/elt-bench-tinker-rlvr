@@ -7,6 +7,12 @@ assets. The [authorized Tinker pilot](evidence/tinker-pilot.md) subsequently
 completed one genuine optimizer step with checkpoint verification. This
 document retains the audit execution history.
 
+The later [official books runtime audit](evidence/books-runtime.md) records
+the 15-input validation, real local PostgreSQL, MongoDB, and REST checks,
+Compose validation, and the remaining Airbyte and Snowflake blockers. Its
+[runbook](LIVE_SETUP.md#official-snowflake-books) contains the current setup
+and cleanup commands for the credentialed rollout.
+
 ## A. Completed implementations
 
 | Area | Implementation and audit findings |
@@ -105,7 +111,7 @@ sampling, backward pass, optimizer call or checkpoint creation was executed.
 ## D. Live execution checklist
 
 1. After warehouse approval, use the pinned benchmark setup in the
-   [README](README.md#official-snowflake-rollout). Set the official environment
+   [runbook](LIVE_SETUP.md#official-snowflake-books). Set the official environment
    entries, use a dedicated Snowflake role and monitored warehouse, and keep
    the run output private. Probe Airbyte inventory, Snowflake login, and
    transient namespace cleanup. The source sync itself is exercised by the
