@@ -6,6 +6,9 @@ The upstream checkout was clean at
 was performed, and no live evaluator, execution-derived reward, or Snowflake
 receipt exists for this task.
 
+The [Windows bootstrap follow-up](books-windows-bootstrap.md) records the
+subsequent WSL installation, reboot boundary and staged Airbyte artifacts.
+
 ## Host and source execution
 
 `Get-Command` found no Docker, abctl, Podman or kubectl in PATH. Docker

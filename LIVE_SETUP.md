@@ -53,10 +53,64 @@ and Python 3.11 or later. Use a dedicated Docker context or machine for the
 fixed `elt-*` container names and the `books` seed databases.
 [Airbyte requirements](https://docs.airbyte.com/platform/using-airbyte/getting-started/oss-quickstart)
 
-On this Windows machine, an administrator can run `wsl --install -d Ubuntu`,
-restart when prompted, install Docker Desktop, and enable its WSL integration
-for Ubuntu. Confirm `wsl --list --verbose` reports version 2 and `docker info`
-can reach the Linux engine from Ubuntu before running the commands below.
+On this Windows machine, enable WSL as an administrator first. Install the
+Ubuntu distro under the project user's account so Docker Desktop can integrate
+with it. The Docker Desktop per-user install uses the WSL 2 backend.
+[Microsoft WSL install](https://learn.microsoft.com/en-us/windows/wsl/install)
+[Docker Desktop install](https://docs.docker.com/desktop/setup/install/windows-install/)
+
+On the audited machine, WSL and Docker Desktop are already installed and
+Windows has requested a restart. After saving work, restart Windows and begin
+with `wsl.exe --version` below. [Bootstrap evidence](evidence/books-windows-bootstrap.md)
+
+```powershell
+# Administrator PowerShell. Save work and restart when installation requests it.
+wsl.exe --install --no-distribution --web-download
+# After the restart, in the project user's PowerShell.
+wsl.exe --version
+wsl.exe --set-default-version 2
+wsl.exe --install --web-download -d Ubuntu
+wsl.exe --list --verbose
+```
+
+Launch Ubuntu once to create its Linux user. If Docker Desktop is missing,
+use the official installer in per-user mode. Launch Docker Desktop, review its
+first-run agreement, and enable Ubuntu under **Settings → Resources → WSL
+Integration**. Verify the engine and Compose from Ubuntu with a real container.
+The WSL package must be 2.1.5 or newer and Ubuntu must be registered as version 2.
+[Docker Desktop WSL backend](https://docs.docker.com/desktop/features/wsl/)
+
+```powershell
+Set-Location S:\STARTER\elt-tinker-phase1
+# Only needed if Docker Desktop has yet to be installed.
+$installer = (Resolve-Path 'runs/books-machine/Docker Desktop Installer.exe').Path
+$signature = Get-AuthenticodeSignature -FilePath $installer
+if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'Docker') {
+    throw 'Docker installer signature could not be verified'
+}
+Start-Process -FilePath $installer -Wait -ArgumentList 'install','--user','--backend=wsl-2'
+# From PowerShell after opening Docker Desktop and enabling Ubuntu integration.
+wsl.exe -d Ubuntu -- docker info --format '{{.OSType}} {{.ServerVersion}}'
+wsl.exe -d Ubuntu -- docker compose version
+wsl.exe -d Ubuntu -- docker run --rm hello-world
+```
+
+Use the download linked in the Docker install guide if the staged installer
+is missing or incomplete. Resume from the first check that has yet to pass.
+If a partial download remains in the ignored directory, resume it before the
+signature check.
+
+```powershell
+curl.exe -fsSL -C - 'https://desktop.docker.com/win/main/amd64/Docker%20Desktop%20Installer.exe' `
+  -o 'runs/books-machine/Docker Desktop Installer.exe'
+```
+
+Continue the Linux commands from the repository root inside Ubuntu. On the
+audited machine, try `cd /mnt/s/STARTER/elt-tinker-phase1`. If the S: volume
+isn't mounted, mount it as DrvFS or copy the project, pinned upstream checkout
+and ignored staged assets to the Linux filesystem. Create a Linux virtual
+environment there before installing the Python dependencies. The existing
+Windows virtual environments are Windows-only.
 
 Transfer the ignored staged files to the corresponding paths on the target
 host. To fetch replacements, extract the `data/books` paths from the official
@@ -74,7 +128,7 @@ From the project root in an activated project venv:
 umask 077
 python -m pip install -e '.[official]' awscli pymongo flask
 export ELT_BENCH_ROOT="$(cd ../upstream-elt-bench && pwd)"
-runtime="$PWD/runs/books-runtime"
+runtime="$PWD/runs/books-runtime-wsl"
 private="$PWD/runs/books-private"
 mkdir -p "$private"
 python -m elt_rl.books_setup --checkout "$ELT_BENCH_ROOT" stage \
@@ -102,6 +156,16 @@ The official custom connector declares CDK 4.3.0 for Airbyte 1.5.1. The
 legacy chart index lists chart 1.5.1 for that platform version. Use a private,
 disposable cluster and keep Connector Builder enabled. The local deployment
 below uses the documented image repository override for historical MinIO tags.
+The verified chart archive staged in `runs/books-machine/airbyte-1.5.1.tgz`
+can be unpacked into `$runtime` in place of the `helm pull` command.
+On Linux x86-64, the staged abctl v0.30.4 archive can be unpacked into
+`$runtime` and its binary directory added to the current shell PATH.
+
+```bash
+tar -xf runs/books-machine/abctl-v0.30.4-linux-amd64.tar.gz -C "$runtime"
+export PATH="$runtime/abctl-v0.30.4-linux-amd64:$PATH"
+abctl version
+```
 
 ```bash
 helm pull airbyte --repo https://airbytehq.github.io/helm-charts/ \
@@ -159,11 +223,80 @@ pinned public config and the four Airbyte binding fields. The staged
 Snowflake credentials separately and takes source routing and connector IDs
 for built-in sources from the pinned checkout.
 
+### Run one local Airbyte sync before Snowflake
+
+This uses the published upstream REST connector and a disposable database on
+the existing local source-stack PostgreSQL server. It requires the local
+Compose stack and Airbyte. Use it to check discovery, the workload network,
+actual row transfer, and job logs without cloud services.
+
+```bash
+docker exec elt-postgres psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -c 'CREATE DATABASE books_airbyte_smoke;'
+```
+
+1. In the self-hosted workspace, create a Postgres destination named
+   `books-airbyte-smoke` with host `elt-postgres`, port `5432`, database
+   `books_airbyte_smoke`, and default schema `airbyte_smoke`. Use the pinned
+   development Postgres login from the public `books/config.yaml`. For this
+   local stack use SSL disabled and no SSH tunnel. Run the destination check.
+2. Create a manual connection from the published `Elt Snowflake` Source to
+   `books-airbyte-smoke`. Choose the destination-defined namespace, enable only
+   `book_language` and select **Full Refresh | Append**. Save and start one
+   sync. Use a new empty destination database for a fresh count check.
+3. Open the connection's **Job History**, inspect the attempt logs, and save
+   them under an ignored run directory. Record the job ID, state, stream,
+   records read and written, and connector versions. Confirm the destination
+   contains 27 rows and record the SQL result. An Airbyte success label alone
+   is insufficient.
+4. After the job is terminal and the logs are saved, remove that test
+   connection and destination in Airbyte. Leave the official source published
+   for the rollout. Remove only the disposable database.
+
+```bash
+docker exec elt-postgres psql -U postgres -d books_airbyte_smoke -v ON_ERROR_STOP=1 \
+  -Atc 'SELECT count(*) FROM airbyte_smoke.book_language;'
+docker exec elt-postgres psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -c 'DROP DATABASE books_airbyte_smoke;'
+```
+
+Check the job's configured namespace and table mapping if the count query
+cannot find the table. The smoke sync exercises one official REST stream.
+Snowflake transfer for all 15 streams and the official evaluators require the
+credentialed rollout. [Postgres destination](https://docs.airbyte.com/integrations/destinations/postgres)
+[Airbyte job logs](https://docs.airbyte.com/platform/operator-guides/browsing-output-logs)
+
 ### 3. Configure Snowflake after authorization
 
-Use an existing authorized lab account if available. On the host where the
+Use an existing authorized lab account if available. Otherwise, sign up at
+the Snowflake trial page, verify the email address, select an organization,
+cloud and region allowed by the lab, and confirm that Snowsight reports an
+active trial with credit available. Leave payment details unset. Share the
+account identifier and Snowflake hostname through the private configuration
+file. Wait for explicit approval before creating the warehouse, using trial
+credits or running a job. [Trial signup](https://www.snowflake.com/en/snowflake-trial/)
+[Trial terms](https://docs.snowflake.com/en/user-guide/admin-trial-account)
+
+On the host where the
 rollout runs, create an encrypted RSA PKCS#8 key in the private directory.
 Send only the public key body to the Snowflake administrator.
+
+On the audited Windows host, the encrypted key, public key and incomplete
+credential JSON are already in `%LOCALAPPDATA%\ELTBenchBooks`. Reuse these files
+for this account setup. Fill in `account` and `host` only after account access
+is authorized. Select the path using `ELT_SNOWFLAKE_CREDENTIAL_JSON` when the
+service account and grants are ready.
+
+```powershell
+$booksPrivate = Join-Path $env:LOCALAPPDATA 'ELTBenchBooks'
+((Get-Content -LiteralPath (Join-Path $booksPrivate 'snowflake.pub')) |
+    Where-Object { $_ -notlike '-----*' }) -join ''
+# Once the account and role have been configured and login is authorized:
+$env:ELT_SNOWFLAKE_CREDENTIAL_JSON = Join-Path $booksPrivate 'snowflake.json'
+.\.venv-core\Scripts\python.exe -m elt_rl.preflight official --snowflake-probe
+```
+
+For a different host or a new key, use the following commands.
 
 ```bash
 openssl genrsa 2048 | openssl pkcs8 -topk8 -v2 aes-256-cbc -out "$private/snowflake.p8"
