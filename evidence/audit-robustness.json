@@ -1,0 +1,90 @@
+[
+  {
+    "failure_mode": "data-derived control",
+    "intervention": "change assignments and amounts",
+    "original_reward": 1.0,
+    "robust_reward": 1.0,
+    "robust_stage1": 1.0,
+    "robust_stage2": 1.0,
+    "detects": "positive control for data-dependent SQL",
+    "original_ms": 68.68,
+    "additional_ms": 66.77
+  },
+  {
+    "failure_mode": "hard-coded aggregates",
+    "intervention": "change assignments and amounts",
+    "original_reward": 1.0,
+    "robust_reward": 0.35,
+    "robust_stage1": 1.0,
+    "robust_stage2": 0.0,
+    "detects": "static outputs can match all original answers",
+    "original_ms": 69.37,
+    "additional_ms": 68.43
+  },
+  {
+    "failure_mode": "amount cutoff",
+    "intervention": "increase one order above 20",
+    "original_reward": 1.0,
+    "robust_reward": 0.675,
+    "robust_stage1": 1.0,
+    "robust_stage2": 0.5,
+    "detects": "unjustified cutoff drops a legitimate order",
+    "original_ms": 83.01,
+    "additional_ms": 78.17
+  },
+  {
+    "failure_mode": "missing row",
+    "intervention": "add one customer without orders",
+    "original_reward": 1.0,
+    "robust_reward": 0.675,
+    "robust_stage1": 1.0,
+    "robust_stage2": 0.5,
+    "detects": "new customer must be included",
+    "original_ms": 79.08,
+    "additional_ms": 84.33
+  },
+  {
+    "failure_mode": "duplicate key",
+    "intervention": "add a customer sharing an existing name",
+    "original_reward": 1.0,
+    "robust_reward": 0.675,
+    "robust_stage1": 1.0,
+    "robust_stage2": 0.5,
+    "detects": "duplicate IDs fail the unique-key check",
+    "original_ms": 81.53,
+    "additional_ms": 84.24
+  },
+  {
+    "failure_mode": "null assumption",
+    "intervention": "make a second customer's name NULL",
+    "original_reward": 1.0,
+    "robust_reward": 0.675,
+    "robust_stage1": 1.0,
+    "robust_stage2": 0.5,
+    "detects": "the task requires preserving all NULL names",
+    "original_ms": 67.36,
+    "additional_ms": 68.64
+  },
+  {
+    "failure_mode": "order invariance",
+    "intervention": "reverse source order and emit descending keys",
+    "original_reward": 1.0,
+    "robust_reward": 1.0,
+    "robust_stage1": 1.0,
+    "robust_stage2": 1.0,
+    "detects": "row order alone must not cause rejection",
+    "original_ms": 66.78,
+    "additional_ms": 66.71
+  },
+  {
+    "failure_mode": "repeat execution",
+    "intervention": "load and transform twice in the same warehouse",
+    "original_reward": 1.0,
+    "robust_reward": 1.0,
+    "robust_stage1": 1.0,
+    "robust_stage2": 1.0,
+    "detects": "local full refresh and replace semantics preserve tables and counts",
+    "original_ms": 56.94,
+    "additional_ms": 33.48
+  }
+]

@@ -1,0 +1,25 @@
+{
+  "target": "tinker",
+  "checks": [
+    {
+      "check": "tinker_key",
+      "status": "pass",
+      "detail": "configured; validity untested"
+    },
+    {
+      "check": "renderer_and_tokenizer",
+      "status": "pass",
+      "detail": "pinned tokenizer and Cookbook renderer exercised offline"
+    },
+    {
+      "check": "pilot_budget",
+      "status": "pass",
+      "detail": "rank 16, 3 rollouts, reference token estimate 0.4904 USD"
+    },
+    {
+      "check": "model_access",
+      "status": "unverified",
+      "detail": "only an authorized remote run can confirm project support and live pricing"
+    }
+  ]
+}

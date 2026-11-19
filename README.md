@@ -9,7 +9,7 @@ with scripted token actions. The same episode interface supports an official
 Snowflake `books` rollout and a one-step Tinker LoRA command.
 
 [Implementation design](DESIGN.md) · [Phase 1 evidence](evidence/phase1.txt) ·
-[Integration evidence](evidence/integrations.txt)
+[Integration evidence](evidence/integrations.txt) · [Final handoff](FINAL_HANDOFF.md)
 
 ## Run locally
 
@@ -47,11 +47,12 @@ with status 1 if the episode ended without submission.
 
 ### Cookbook offline check
 
-The core install skips the optional Cookbook smoke test. With the pinned full
+The core install skips the optional Cookbook smoke tests. With the pinned full
 Cookbook dependency available, install `.[test,official,cookbook]` and run
-pytest as above. The test uses a scripted byte renderer so it can call the real
-`Env.initial_observation` and `Env.step` without downloading model weights or
-creating a sampling client.
+pytest as above. A scripted-token test runs the real group builder and
+training datum assembly. The optional Qwen test uses the real tokenizer,
+Cookbook renderer and tool calls through `Env.step`. Both tests work without
+model weights or a sampling client.
 
 The pinned Cookbook's dependency resolver could not find a compatible
 `tml-renderers>=0.4.1` distribution on the tested Windows Python 3.12 host.
@@ -71,8 +72,27 @@ site-packages path to use its existing CPU PyTorch 2.11.0. See the exact
 invocation in the integration evidence log. For a venv with its own CPU PyTorch, run pytest
 directly as shown in the local setup.
 
-Use a fresh compatible environment with the full Cookbook package for actual
-model rendering and training.
+The audited default Qwen text path uses the pinned Cookbook renderer directly
+and works with the focused Windows environment. Other model/renderer choices
+should use a compatible full Cookbook install and pass preflight.
+
+Cache only the public tokenizer files for the default model, then use
+`ELT_TEST_REAL_RENDERER=1` to require the real-renderer test. This download
+does not use a Tinker credential or download model weights.
+
+```powershell
+@'
+from huggingface_hub import snapshot_download
+from elt_rl.rendering import QWEN_TOKENIZER_REVISION
+snapshot_download(
+    "Qwen/Qwen3.5-4B", revision=QWEN_TOKENIZER_REVISION, token=False,
+    allow_patterns=["tokenizer.json", "tokenizer_config.json", "config.json", "chat_template.jinja"],
+)
+'@ | .\.venv\Scripts\python.exe -
+$env:HF_HUB_OFFLINE='1'
+$env:ELT_TEST_REAL_RENDERER='1'
+.\.venv\Scripts\python.exe -m pytest -q --basetemp .venv/pytest-run
+```
 
 To run the official adapter's offline tests, install `.[test,official]` and
 put the pinned benchmark checkout at `../upstream-elt-bench` or set
@@ -169,6 +189,19 @@ Use an isolated, least-privilege role with a dedicated warehouse and support
 for creating and dropping its own temporary run databases. The Snowflake JSON
 requires `account`, `host`, `user`, `password`, `role`, and `warehouse`.
 The Airbyte workspace must have the pinned connector definitions.
+The read-only local preflight checks each prerequisite independently.
+
+```bash
+python -m elt_rl.preflight official
+```
+
+After authorization, add `--airbyte-probe` to inspect the self-hosted workspace
+and its official custom source. That probe uses read-only Airbyte requests.
+It cannot establish that all source streams will sync. Add
+`--snowflake-probe` to check login and warehouse visibility, and
+`--namespace-probe` to also exercise create/drop with an isolated transient
+database. Omit those flags on a machine where service access has not been
+approved. The preflight labels unexecuted checks as unverified.
 
 ```bash
 # In the disposable ELT-Bench checkout on the approved host
@@ -186,7 +219,8 @@ python -m elt_rl.run official-rollout --allow-paid --allow-warehouse --budget-us
 ```
 
 Set `ELT_SNOWFLAKE_CREDENTIAL_JSON` and `TINKER_API_KEY` through your private
-environment before running. `ELT_GT_SNOWFLAKE` must contain the original
+environment or the ignored local `.env` before running. The process environment
+takes precedence. `ELT_GT_SNOWFLAKE` must contain the original
 `books/*.csv` reference files from the [pinned benchmark's ground-truth instructions](https://github.com/uiuc-kang-lab/ELT-Bench/blob/3b068d5f15f64541d05fbc33a817e4b08c6bf173/README.md#download-the-ground-truth).
 For each counted backend instance, execution is limited to two load attempts
 and four warehouse transform attempts. Submission permits one separate replay.
@@ -195,23 +229,32 @@ operator's Snowflake resource monitor and Airbyte deployment.
 
 ## One Tinker LoRA update
 
-This command trains on the local fixture to isolate Tinker spend from Snowflake
-spend. Run it only after approval, with the full pinned Cookbook on a supported
-platform and `TINKER_API_KEY` set. `TINKER_PROJECT_ID` is optional for project
-selection.
+The pilot trains on the local fixture. It uses the hosted `Qwen/Qwen3.5-4B`
+model by default and only needs a local copy of its public tokenizer. Set
+`TINKER_API_KEY` in the environment or ignored local `.env`.
+`TINKER_PROJECT_ID` is optional. The dry-run never constructs a Tinker client
+and reports whether the selected renderer and tokenizer work offline.
 
 ```bash
-python -m pip install -e '.[cookbook]'
-python -m elt_rl.run train-one --allow-paid --budget-usd 2 --group-size 3 --out runs/tinker-001
+python -m elt_rl.preflight tinker --budget-usd 0.60 --group-size 3
+# Only after approval
+python -m elt_rl.run train-one --allow-paid --budget-usd 0.60 --group-size 3 --out runs/tinker-001
 ```
 
 The command checks live public prices and server capabilities for
 `Qwen/Qwen3.5-4B` by default, samples one group from rank-16 LoRA weights and
-passes genuine rewards to the Cookbook's advantage and datum assembly.
+passes genuine rewards to the Cookbook's advantage and datum assembly. The
+pilot allows 18 turns, an 8,192-token context, 4,096 sampled tokens and up to
+1,024 tokens per turn. The offline reference estimate was about USD 0.49
+for three rollouts, including one verification forward pass. The live
+command recalculates the estimate using published prices.
 If all rewards are identical or there are no usable datums, it exits with
 status 2 before optimizer calls. With nonempty training data, it queues
-`forward_backward` and `optim_step`, waits for each result, then saves one
-checkpoint with a 24-hour TTL. It records each stage separately. Use the Tinker
+`forward_backward`, checks its result, then submits `optim_step`. It compares
+action log probabilities from a training datum before and after the update,
+then saves one checkpoint with a 24-hour TTL. A completed optimizer with
+inconclusive state verification is recorded separately and exits 2.
+Use the Tinker
 session link to reconcile actual billing. The local manifest records a
 token-based estimate and marks actual expenditure and credit balances as
 unavailable. [Tinker models and pricing](https://tinker-docs.thinkingmachines.ai/tinker/models/models_and_pricing/)
@@ -221,9 +264,12 @@ unavailable. [Tinker models and pricing](https://tinker-docs.thinkingmachines.ai
 ```powershell
 .\.venv\Scripts\python.exe -m elt_rl.robustness examples/customer_orders.jsonl
 .\.venv\Scripts\python.exe -m elt_rl.robustness examples/static_answer.jsonl
+.\.venv\Scripts\python.exe -m elt_rl.robustness --suite --repetitions 3
 ```
 
 Both traces score 1.0 on the original fixture. On the changed input, the
 data-derived pipeline scores 1.0 and the hard-coded pipeline scores 0.35
 with correct Stage 1 counts and both Stage 2 models wrong. The second CLI
-invocation exits 2. The experiment leaves the official scoring path intact.
+invocation exits 2. The suite adds single-value, added-row, duplicate-key,
+null, ordering, and same-warehouse repeat checks and reports the measured
+extra runtime per case. See the [results and limitations](FINAL_HANDOFF.md#e-scientific-observations).

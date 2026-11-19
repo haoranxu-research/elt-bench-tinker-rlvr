@@ -1,44 +1,63 @@
-# ELT-Bench RLVR implementation design
+# ELT-Bench reinforcement learning with verifiable rewards
 
-## Rollout
+## What the model sees and does
 
-Each rollout owns an artifact directory and a warehouse namespace. The model
-reads the task, selects source streams, runs extraction and loading, writes
-transformations, and revises them using execution feedback. Submission
-requires an earlier successful run of the current artifacts. The host replays
-them into a new warehouse namespace before grading. Tool calls run sequentially
-within each rollout and grouped rollouts have independent state.
+The model starts with instructions to read the task and a schema for seven
+tools. `read_task` and `read_task_section` expose public source and output
+specifications. `list_workspace` lists artifacts, and `write_pipeline_file`
+edits only task-approved files. `execute_pipeline` runs extraction/loading
+or transformations and returns bounded feedback. `inspect_warehouse`
+reports materialized table counts. `submit_pipeline` requests fresh replay
+and grading.
 
-## Warehouse and reward
+An episode proceeds from task inspection to source selection and load, then
+to transformations. The model can repair an error and rerun the stage.
+Editing invalidates earlier execution evidence. Submitting requires a
+successful test of the current artifacts in an earlier turn. A rollout ends
+on accepted submission, an action without tools, a terminal parse error, or a
+budget limit. An unfinished rollout earns zero.
 
-The local task loads CSVs into SQLite and materializes two models. The official
-`books` adapter translates the model's source selection into Airbyte
-connections using the benchmark's pinned Terraform provider, waits for syncs
-and materializes three Snowflake models. It runs the pinned evaluator in a
-private directory. The model sees public task metadata and bounded execution
-feedback. Credentials, hidden references and evaluator artifacts remain on
-the host. Official SQL is constrained to raw relations and permitted built-in
-functions.
+## Execution and grading
 
-Stage 1 measures the fraction of raw tables with the expected row count.
-Only complete Stage 1 success permits Stage 2. Stage 2 measures the fraction
-of transformed tables that match. The training reward weights the fractions
-35% and 65%, respectively. A rollout without successful submission scores zero.
-The official adapter uses the benchmark's comparison results. The optional
-local changed-input experiment checks whether a static passing pipeline responds
-to new source data.
+Each episode owns a private artifact directory and a separate warehouse
+namespace. Tools run sequentially within that episode. The local backend
+loads CSVs into SQLite and materializes two models. The official adapter
+uses Airbyte to load selected `books` streams into a transient Snowflake
+database and materializes three models using Snowflake SQL. Submission opens
+a second fresh namespace and replays the artifacts before reading its
+warehouse state. Cleanup is bounded and ambiguous Snowflake resource
+creation is reported for operator review.
 
-## Training and evidence
+Stage 1 is the fraction of required raw tables with the correct row count.
+Only complete Stage 1 success permits Stage 2, which measures matching
+transformed models. The terminal training reward weights the stage fractions
+35% and 65%. The official adapter executes the pinned evaluator in a private
+directory. The local verifier compares full row content by key and checks
+duplicates, nulls, and numeric tolerance.
 
-The Cookbook renders tool messages and runs grouped trajectories. The one-step
-command uses Cookbook advantage centering and training datum assembly. It
-requires varied within-group rewards and nonzero advantages. A budget estimate
-uses current prices and defined token limits. The command records sampling,
-forward/backward, optimizer completion and checkpoint separately.
+The tool surface has no shell or arbitrary file access. Source IDs and
+tables are allowlisted. Local SQL uses a SQLite authorizer. Official SQL is
+validated as a single SELECT over approved raw tables. Credentials and
+ground truth remain on the host. Artifact, feedback, action, query and
+rollout budgets limit work. Changed-input checks can expose some answers
+that coincidentally match the original fixture.
 
-Local execution, staged reward, changed-input behavior and the Cookbook
-trajectory-to-datum path were tested without credentials. The official provider
-configuration was validated against the real Terraform schema. The official
-evaluator ran with a synthetic Snowflake connector. The live official rollout
-and Tinker update require authorization and the corresponding services and
-credentials. [Repository instructions](README.md)
+## Tinker integration and extension
+
+The pinned Cookbook renders tool messages, runs independent episode groups,
+centers execution-derived rewards, and assembles training datums. The
+recipe checks sampled token IDs, behavior log probabilities, provenance,
+and masks before submitting a rank-16 LoRA update. Constant-reward groups
+exit without optimizer calls. The live entry point waits for valid
+`forward_backward` results before one `optim_step`, probes post-update action
+log probabilities on a training datum, and records the checkpoint and each
+status separately.
+
+To add a destination, provide a `TaskDefinition` with public task text,
+approved artifacts, a `WarehouseBackend` factory and a host-side verifier.
+The episode lifecycle, tool calls and training path stay the same.
+
+The local warehouse path, real Qwen text renderer and Cookbook datum path
+have offline evidence. The pinned evaluator used a synthetic warehouse
+connector in tests. Live Snowflake execution, live Tinker optimization, and
+publication are pending. [Reproduction and evidence](FINAL_HANDOFF.md)

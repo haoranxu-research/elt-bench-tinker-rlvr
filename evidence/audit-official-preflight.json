@@ -1,0 +1,80 @@
+{
+  "target": "official",
+  "checks": [
+    {
+      "check": "ELT_BENCH_ROOT",
+      "status": "blocked",
+      "detail": "set ELT_BENCH_ROOT in the environment or local .env"
+    },
+    {
+      "check": "pinned_books_assets",
+      "status": "pass",
+      "detail": "pinned checkout and scoped assets verified; set ELT_BENCH_ROOT for the live command"
+    },
+    {
+      "check": "terraform",
+      "status": "pass",
+      "detail": "Terraform executable located"
+    },
+    {
+      "check": "PyYAML",
+      "status": "pass",
+      "detail": "6.0.3"
+    },
+    {
+      "check": "snowflake-connector-python",
+      "status": "pass",
+      "detail": "4.8.1"
+    },
+    {
+      "check": "pandas",
+      "status": "pass",
+      "detail": "3.1.1"
+    },
+    {
+      "check": "sqlglot",
+      "status": "pass",
+      "detail": "30.33.0"
+    },
+    {
+      "check": "generated_books_inputs",
+      "status": "blocked",
+      "detail": "set ELT_BOOKS_INPUT_DIR in the environment or local .env"
+    },
+    {
+      "check": "ground_truth",
+      "status": "blocked",
+      "detail": "set ELT_GT_SNOWFLAKE in the environment or local .env"
+    },
+    {
+      "check": "snowflake_credentials",
+      "status": "blocked",
+      "detail": "set ELT_SNOWFLAKE_CREDENTIAL_JSON in the environment or local .env"
+    },
+    {
+      "check": "airbyte_url",
+      "status": "blocked",
+      "detail": "set ELT_AIRBYTE_URL in the environment or local .env"
+    },
+    {
+      "check": "airbyte",
+      "status": "unverified",
+      "detail": "use --airbyte-probe to inspect the self-hosted workspace and sources"
+    },
+    {
+      "check": "snowflake",
+      "status": "unverified",
+      "detail": "use --snowflake-probe after approval to verify login and warehouse visibility"
+    },
+    {
+      "check": "namespace_isolation",
+      "status": "unverified",
+      "detail": "use both Snowflake flags after authorization to verify create/drop"
+    },
+    {
+      "check": "source_sync",
+      "status": "unverified",
+      "detail": "Airbyte source connectivity for all streams and write permissions require a live run"
+    }
+  ]
+}
