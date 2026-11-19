@@ -44,7 +44,7 @@ REST streams. Airbyte and Snowflake remain pending. [Runtime evidence](evidence/
 
 ### 1. Prepare and verify the local sources
 
-Use an existing Linux lab host with Docker Engine and Compose v2, or enable WSL2
+Use an existing Linux lab host with Docker Engine and Compose 2.24.4 or later, or enable WSL2
 and Docker Desktop with administrator approval. Use a host isolated from
 untrusted peers because the pinned Compose stack publishes development service
 ports. Plan for at least 4 logical processors and 8 GiB available to Airbyte,
@@ -59,9 +59,10 @@ with it. The Docker Desktop per-user install uses the WSL 2 backend.
 [Microsoft WSL install](https://learn.microsoft.com/en-us/windows/wsl/install)
 [Docker Desktop install](https://docs.docker.com/desktop/setup/install/windows-install/)
 
-On the audited machine, WSL and Docker Desktop are already installed and
-Windows has requested a restart. After saving work, restart Windows and begin
-with `wsl.exe --version` below. [Bootstrap evidence](evidence/books-windows-bootstrap.md)
+On the audited machine, WSL and Docker Desktop are installed and the completed
+Windows restart activated Virtual Machine Platform. Docker Desktop's own
+WSL 2 distro can run Linux containers from the Windows Docker CLI. A separate
+Ubuntu distro is useful for the Bash examples. [Bootstrap evidence](evidence/books-windows-bootstrap.md)
 
 ```powershell
 # Administrator PowerShell. Save work and restart when installation requests it.
@@ -115,7 +116,10 @@ Windows virtual environments are Windows-only.
 Transfer the ignored staged files to the corresponding paths on the target
 host. To fetch replacements, extract the `data/books` paths from the official
 `data_api.zip` and `data_db.zip` into `runs/books-assets/data-api/` and
-`runs/books-assets/data-db/`, respectively. Download the two flat files from
+`runs/books-assets/data-db/`, respectively. Also extract
+`data/address/alias.csv` from `data_api.zip` into `runs/books-assets/data-api/`.
+The pinned shared connector uses that stream for its connection check. It is
+outside the 15 `books` streams used for the reward. Download the two flat files from
 the URLs in the pinned `books/config.yaml` to `runs/books-assets/flat-files/`
 as `address_status.jsonl` and `order_status.csv`. The connector uses the original
 URLs during a live run. Fetch the three reference CSVs from the pinned revision
@@ -135,8 +139,10 @@ python -m elt_rl.books_setup --checkout "$ELT_BENCH_ROOT" stage \
   --assets runs/books-assets --out "$runtime"
 python -m elt_rl.books_setup --checkout "$ELT_BENCH_ROOT" rest-check --runtime "$runtime"
 
-docker compose -p elt-docker -f "$runtime/elt-docker/docker-compose.yml" config --quiet
-docker compose -p elt-docker -f "$runtime/elt-docker/docker-compose.yml" up -d --wait
+docker compose -p elt-docker -f "$runtime/elt-docker/docker-compose.yml" \
+  -f "$PWD/deploy/books-compose.loopback.yml" config --quiet
+docker compose -p elt-docker -f "$runtime/elt-docker/docker-compose.yml" \
+  -f "$PWD/deploy/books-compose.loopback.yml" up -d --wait
 pg_isready -h 127.0.0.1 -p 5433
 curl -fsS http://127.0.0.1:4566/_localstack/health >/dev/null
 docker exec elt-mongodb mongosh --quiet --eval 'if (!db.hello().isWritablePrimary) quit(1)'
@@ -179,6 +185,22 @@ abctl local install --chart "$runtime/airbyte" --values "$runtime/minio-values.y
   --host localhost --insecure-cookies --no-browser
 abctl local status
 docker network connect elt-docker_elt_network airbyte-abctl-control-plane
+```
+
+On Windows, the same chart can be installed with the staged Windows abctl
+binary. The Docker Desktop Linux context must be active. The artifacts below
+are under the project's ignored runtime directory.
+
+```powershell
+$dockerBin = Join-Path $env:LOCALAPPDATA 'Programs/DockerDesktop/resources/bin'
+$env:Path = "$dockerBin;$env:Path"
+$env:DOCKER_CONTEXT = 'desktop-linux'
+$env:DO_NOT_TRACK = '1'
+$abctl = './runs/books-machine/abctl-v0.30.4-windows-amd64/abctl.exe'
+& $abctl local install --chart (Resolve-Path runs/books-machine/chart/airbyte).Path `
+  --values (Resolve-Path runs/books-machine/minio-values.yaml).Path `
+  --host localhost --insecure-cookies --no-browser
+& $abctl local status
 ```
 
 From an Airbyte workload pod, verify that `elt-postgres:5432`,
@@ -395,7 +417,8 @@ role, and drop the dedicated service user, warehouse, monitor and role if
 they were reserved for one run and all run-owned databases are gone.
 
 ```bash
-docker compose -p elt-docker -f "$runtime/elt-docker/docker-compose.yml" down
+docker compose -p elt-docker -f "$runtime/elt-docker/docker-compose.yml" \
+  -f "$PWD/deploy/books-compose.loopback.yml" down
 abctl local uninstall
 ```
 

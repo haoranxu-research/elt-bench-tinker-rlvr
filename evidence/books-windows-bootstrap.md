@@ -5,6 +5,9 @@ prepared the machine and prerequisites for the official Airbyte and Snowflake
 run. The [prior runtime audit](books-runtime.md) records complete staged row
 counts and local PostgreSQL, MongoDB, and REST execution.
 
+The subsequent [post-restart runtime log](books-docker-runtime.md) records
+the real Docker container test and source stack.
+
 ## WSL installed and awaiting restart
 
 The Windows host reported build 26200, 18 logical processors, 31.6 GiB total
