@@ -10,15 +10,18 @@ dependencies = []
 
 [project.optional-dependencies]
 test = ["pytest==9.2.0"]
+official = ["PyYAML>=6", "sqlglot>=27,<31", "pandas>=2.2,<4", "snowflake-connector-python>=3.14,<5"]
 cookbook = [
     "tinker-cookbook @ git+https://github.com/thinking-machines-lab/tinker-cookbook.git@28de41edfcdd07ba3e7980f35d53a586024a2184",
+    "tinker==0.39.2",
 ]
 
 [project.scripts]
 elt-phase1 = "elt_rl.cli:main"
+elt-run = "elt_rl.run:main"
 
 [tool.setuptools.package-data]
-elt_rl = ["fixture/*.csv", "fixture/*.json", "fixture/*.md"]
+elt_rl = ["fixture/*.csv", "fixture/*.json", "fixture/*.md", "counterfactual/*.csv", "counterfactual/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

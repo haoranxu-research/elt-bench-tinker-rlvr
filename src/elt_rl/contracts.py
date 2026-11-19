@@ -1,5 +1,5 @@
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Protocol
 
@@ -18,6 +18,8 @@ class EpisodeConfig:
     max_artifact_bytes: int = 8_192
     max_output_chars: int = 2_048
     execution_seconds: float = 1.0
+    rollout_seconds: float = 90.0
+    max_submissions: int = 2
 
 
 @dataclass(frozen=True)
@@ -56,3 +58,4 @@ class TaskDefinition:
     transform_artifacts: tuple[str, ...]
     open_backend: Callable[[Path, EpisodeConfig], WarehouseBackend]
     verify: Callable[[WarehouseBackend], Grade]
+    sections: Mapping[str, str] = field(default_factory=dict)

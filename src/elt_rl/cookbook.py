@@ -1,18 +1,30 @@
 """Optional Cookbook environment integration. Importing it creates no API client."""
 
 import asyncio
+import logging
+import shutil
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 from tinker_cookbook.renderers.base import Message, Renderer, ToolSpec
 from tinker_cookbook.rl.message_env import EnvFromMessageEnv, MessageStepResult
 from tinker_cookbook.rl.rollout_limits import RolloutLimits
-from tinker_cookbook.rl.types import Env, EnvGroupBuilder, Metrics
+from tinker_cookbook.rl.types import Env, EnvGroupBuilder, Metrics, RLDataset
 from tinker_cookbook.tool_use import AgentToolMessageEnv, Tool, ToolInput, ToolResult, simple_tool_result
 
 from .contracts import EpisodeConfig, TaskDefinition
 from .episode import INITIAL_INSTRUCTION, TOOLS, ELTEpisodeState
 from .local import local_task
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class TokenBudget:
+    context: int = 16_384
+    sampled: int = 8_192
+    per_turn: int = 2_048
 
 
 @dataclass
@@ -72,13 +84,16 @@ class ELTGroupBuilder(EnvGroupBuilder):
     """Create isolated members and release them after Cookbook group grading."""
 
     def __init__(self, config: EpisodeConfig, renderer: Renderer, group_size: int,
-                 task_factory: Callable[[], TaskDefinition] = local_task):
+                 task_factory: Callable[[], TaskDefinition] = local_task,
+                 budget: TokenBudget = TokenBudget(), evidence_dir: Path | None = None):
         if group_size < 1:
             raise ValueError("group_size must be positive")
         self.config = config
         self.renderer = renderer
         self.group_size = group_size
         self.task_factory = task_factory
+        self.budget = budget
+        self.evidence_dir = evidence_dir
         self.episodes: list[ELTEpisodeState] = []
 
     async def make_envs(self) -> Sequence[Env]:
@@ -95,12 +110,12 @@ class ELTGroupBuilder(EnvGroupBuilder):
                     rollout_limits=RolloutLimits(
                         max_turns=self.config.max_turns,
                         max_tool_calls=self.config.max_tool_calls,
-                        max_trajectory_tokens=24_576,
-                        max_sampled_tokens=8_192,
-                        max_turn_tokens=2_048,
-                        rollout_timeout_seconds=90,
+                        max_trajectory_tokens=self.budget.context,
+                        max_sampled_tokens=self.budget.sampled,
+                        max_turn_tokens=self.budget.per_turn,
+                        rollout_timeout_seconds=self.config.rollout_seconds,
                     ),
-                    max_trajectory_tokens=24_576, max_generation_tokens=2_048,
+                    max_trajectory_tokens=self.budget.context, max_generation_tokens=self.budget.per_turn,
                 ))
         except Exception:
             await self.cleanup()
@@ -109,5 +124,30 @@ class ELTGroupBuilder(EnvGroupBuilder):
 
     async def cleanup(self) -> None:
         for episode in self.episodes:
-            await asyncio.to_thread(episode.close)
+            try:
+                if self.evidence_dir and episode.grade().submitted:
+                    await asyncio.to_thread(shutil.copytree, episode.artifact_dir,
+                                            self.evidence_dir / episode.workspace.name)
+            except OSError:
+                logger.error("Could not retain submitted pipeline artifacts")
+            finally:
+                try:
+                    await asyncio.to_thread(episode.close)
+                except Exception:
+                    logger.error("Episode workspace cleanup failed")
         self.episodes.clear()
+
+
+class ELTDataset(RLDataset):
+    """One task batch containing a group of independent rollouts."""
+
+    def __init__(self, builder: EnvGroupBuilder):
+        self.builder = builder
+
+    def __len__(self) -> int:
+        return 1
+
+    def get_batch(self, index: int) -> Sequence[EnvGroupBuilder]:
+        if index != 0:
+            raise IndexError(index)
+        return (self.builder,)

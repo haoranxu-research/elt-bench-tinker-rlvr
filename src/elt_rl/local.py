@@ -3,6 +3,7 @@ import json
 import sqlite3
 from collections.abc import Mapping
 from contextlib import closing
+from functools import partial
 from pathlib import Path
 from time import monotonic
 
@@ -26,12 +27,13 @@ MAX_RESULT_ROWS = 256
 
 
 class SQLiteBackend:
-    def __init__(self, workspace: Path, config: EpisodeConfig):
+    def __init__(self, workspace: Path, config: EpisodeConfig, *, fixture: Path = FIXTURE):
         self.db = sqlite3.connect(
             workspace / "warehouse.sqlite", timeout=config.execution_seconds, cached_statements=0,
             check_same_thread=False,
         )
         self.seconds = config.execution_seconds
+        self.fixture = fixture
         self.raw_tables = {source[0] for source in SOURCES.values()}
         self.db.executescript("""
             PRAGMA trusted_schema = OFF;
@@ -86,7 +88,7 @@ class SQLiteBackend:
                     f"{column} {types[converter]}" for column, converter in zip(columns, converters)
                 )
                 self.db.execute(f"CREATE TABLE {table} ({definitions})")
-                with (FIXTURE / filename).open(encoding="utf-8", newline="") as stream:
+                with (self.fixture / filename).open(encoding="utf-8", newline="") as stream:
                     reader = csv.reader(stream)
                     if tuple(next(reader)) != columns:
                         raise RuntimeError("fixture source header differs from the trusted manifest")
@@ -171,17 +173,17 @@ class SQLiteBackend:
         return tuple(column[0] for column in cursor.description), cursor.fetchall()
 
 
-def local_task() -> TaskDefinition:
+def local_task(fixture: Path = FIXTURE) -> TaskDefinition:
     def verify(backend: WarehouseBackend) -> Grade:
         if not isinstance(backend, SQLiteBackend):
             raise TypeError("fixture verifier requires the SQLite backend")
-        return verify_fixture(backend, FIXTURE / "gold.json")
+        return verify_fixture(backend, fixture / "gold.json")
 
     return TaskDefinition(
         task_id="customer-orders-local",
         instructions=(FIXTURE / "task.md").read_text(encoding="utf-8"),
         load_artifacts=("load.json",),
         transform_artifacts=tuple(MODELS),
-        open_backend=SQLiteBackend,
+        open_backend=partial(SQLiteBackend, fixture=fixture),
         verify=verify,
     )

@@ -23,6 +23,7 @@ class ToolSpec:
 
 TOOLS = {
     "read_task": ToolSpec("Read the current ELT task and its input and output schemas."),
+    "read_task_section": ToolSpec("Read a named task section listed by read_task.", ("section",)),
     "list_workspace": ToolSpec("List saved pipeline artifacts."),
     "write_pipeline_file": ToolSpec("Save text to a task-approved artifact.", ("path", "content")),
     "execute_pipeline": ToolSpec("Run and get feedback for load or transform.", ("stage",)),
@@ -66,6 +67,7 @@ class ELTEpisodeState:
         self._tested_turn: int | None = None
         self._last_turn = 0
         self._calls = 0
+        self._submission_attempts = 0
         self._grade: Grade | None = None
 
     def __enter__(self) -> "ELTEpisodeState":
@@ -112,17 +114,24 @@ class ELTEpisodeState:
             raise PipelineError("tool arguments must be strings")
         if name == "read_task":
             self._inspected_task = True
-            return self.task.instructions
+            sections = ", ".join(self.task.sections)
+            return self.task.instructions + (f"\nTask sections: {sections}" if sections else "")
         if not self._inspected_task:
             raise PipelineError("call read_task first")
         handlers: dict[str, Callable[..., str]] = {
             "list_workspace": self._list_workspace,
+            "read_task_section": self._read_task_section,
             "write_pipeline_file": self._write,
             "execute_pipeline": lambda stage: self._execute(stage, turn),
             "inspect_warehouse": self.backend.inspect,
             "submit_pipeline": lambda: self._submit(turn),
         }
         return handlers[name](**arguments)
+
+    def _read_task_section(self, section: str) -> str:
+        if section not in self.task.sections:
+            raise PipelineError("unknown task section")
+        return self.task.sections[section]
 
     @property
     def _allowed(self) -> tuple[str, ...]:
@@ -172,6 +181,9 @@ class ELTEpisodeState:
     def _submit(self, turn: int) -> str:
         if self._tested_turn is None or self._tested_turn >= turn:
             raise PipelineError("successfully execute current artifacts in an earlier turn before submitting")
+        if self._submission_attempts >= self.config.max_submissions:
+            raise PipelineError("submission replay limit reached")
+        self._submission_attempts += 1
         self._tested_turn = None
         replay_path = Path(mkdtemp(prefix="submission-", dir=self.workspace))
         replay = self.task.open_backend(replay_path, self.config)

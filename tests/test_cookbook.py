@@ -3,6 +3,7 @@
 import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -77,5 +78,77 @@ def test_cookbook_token_env_group(tmp_path):
             await builder.cleanup()
         assert not builder.episodes
         assert all(not path.exists() for path in workspaces)
+
+    asyncio.run(run())
+
+
+def test_cookbook_rollouts_produce_real_advantages_and_datums(tmp_path):
+    from tinker_cookbook.completers import TokensWithLogprobs
+    from tinker_cookbook.rl.rollouts import do_group_rollout
+    from elt_rl.cookbook import ELTDataset
+    from elt_rl.training import datums_for_group, group_evidence, optimize_once
+
+    actions = [json.loads(line) for line in TRACE.read_text(encoding="utf-8").splitlines()]
+
+    class ScriptedPolicy:
+        def __init__(self, varied):
+            partial = [dict(action) for action in actions]
+            partial[1] = {"tool": "write_pipeline_file", "arguments": {
+                "path": "load.json", "content": '{"sources":{"customers.csv":null,"orders.csv":3}}',
+            }}
+            self.traces = iter((actions, partial if varied else actions))
+            self.active = {}
+
+        async def __call__(self, model_input, stop, *, max_tokens=None):
+            key = asyncio.current_task()
+            if key not in self.active:
+                self.active[key] = iter(next(self.traces))
+            token_ids = list(json.dumps([next(self.active[key])]).encode())
+            assert max_tokens is None or len(token_ids) <= max_tokens
+            await asyncio.sleep(0)
+            return TokensWithLogprobs(token_ids, [-0.5] * len(token_ids))
+
+    async def run():
+        builder = ELTGroupBuilder(EpisodeConfig(tmp_path), cast(Renderer, ScriptedRenderer()), 2)
+        dataset = ELTDataset(builder)
+        assert len(dataset) == 1 and dataset.get_batch(0) == (builder,)
+        constant = await do_group_rollout(builder, ScriptedPolicy(varied=False))
+        assert constant.get_total_rewards() == [1.0, 1.0]
+        assert datums_for_group(constant) == []
+        group = await do_group_rollout(builder, ScriptedPolicy(varied=True))
+        assert sorted(group.get_total_rewards()) == [0.175, 1.0]
+        assert not builder.episodes
+        evidence = group_evidence(group)
+        assert all(any(turn["metrics"].get("submitted") for turn in item["turns"]) for item in evidence)
+        datums = datums_for_group(group)
+        assert datums
+        values = [value for datum in datums for value in datum.loss_fn_inputs["advantages"].data]
+        assert min(values) < 0 < max(values)
+        print(f"Scripted warehouse rewards {sorted(group.get_total_rewards())}, {len(datums)} training datums")
+
+        calls = []
+
+        class FakeTrainingClient:
+            def forward_backward(self, batch, loss_fn):
+                assert loss_fn == "importance_sampling"
+                assert batch and all("mask" not in datum.loss_fn_inputs for datum in batch)
+                calls.append("forward_backward")
+                return asyncio.sleep(0, result=SimpleNamespace(metrics={}, loss_fn_outputs=batch))
+
+            def optim_step(self, params):
+                assert params.learning_rate == 4e-5
+                calls.append("optim_step")
+                return asyncio.sleep(0, result=SimpleNamespace(metrics={}))
+
+            async def save_state(self, name, ttl_seconds):
+                calls.append("save_state")
+                return SimpleNamespace(path="fake-test-checkpoint")
+
+        result = {}
+        await optimize_once(FakeTrainingClient(), datums, lambda **fields: result.update(fields))
+        assert calls == ["forward_backward", "optim_step", "save_state"]
+        assert result["forward_backward"]["result_count"] == len(datums)
+        assert result["optim_step"]["status"] == "completed"
+        assert result["checkpoint"] == "fake-test-checkpoint"
 
     asyncio.run(run())

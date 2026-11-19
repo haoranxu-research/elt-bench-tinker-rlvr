@@ -1,11 +1,15 @@
-# ELT-Bench × Tinker | Phase 1
+# ELT-Bench × Tinker
 
 Run a multi-turn, credential-free ELT episode that extracts two CSV sources,
 loads an isolated SQLite warehouse, materializes two SQL transformations, and
 grades a fresh replay of the submitted pipeline. The sample trace consists of
 scripted actions, including a failed SQL run and its repair. The project
 includes a pinned Cookbook environment adapter and a test that drives it
-with scripted token actions.
+with scripted token actions. The same episode interface supports an official
+Snowflake `books` rollout and a one-step Tinker LoRA command.
+
+[Implementation design](DESIGN.md) · [Phase 1 evidence](evidence/phase1.txt) ·
+[Integration evidence](evidence/integrations.txt)
 
 ## Run locally
 
@@ -44,8 +48,8 @@ with status 1 if the episode ended without submission.
 ### Cookbook offline check
 
 The core install skips the optional Cookbook smoke test. With the pinned full
-Cookbook dependency available, install `.[test,cookbook]` and run pytest as
-above. The test uses a scripted byte renderer so it can call the real
+Cookbook dependency available, install `.[test,official,cookbook]` and run
+pytest as above. The test uses a scripted byte renderer so it can call the real
 `Env.initial_observation` and `Env.step` without downloading model weights or
 creating a sampling client.
 
@@ -58,21 +62,31 @@ exact checkout with only the exercised runtime dependencies:
 git clone https://github.com/thinking-machines-lab/tinker-cookbook.git ../upstream-tinker-cookbook
 git -C ../upstream-tinker-cookbook checkout --detach 28de41edfcdd07ba3e7980f35d53a586024a2184
 .\.venv\Scripts\python.exe -m pip --isolated install --no-deps ../upstream-tinker-cookbook
-.\.venv\Scripts\python.exe -m pip --isolated install tinker==0.39.2 chz==0.4.0 numpy==2.5.5 pillow==13.0.0 rich==15.0.0 termcolor==3.3.0
+.\.venv\Scripts\python.exe -m pip --isolated install tinker==0.39.2 chz==0.4.0 numpy==2.5.5 pillow==13.0.0 rich==15.0.0 termcolor==3.3.0 blobfile==3.3.0 cloudpickle==3.1.3 datasets==4.4.1
+.\.venv\Scripts\python.exe -m pip --isolated install -e '.[test,official]'
 ```
 
 The smoke test also needs PyTorch. The executed run appended the base Python
 site-packages path to use its existing CPU PyTorch 2.11.0. See the exact
-invocation in the evidence log. For a venv with its own CPU PyTorch, run pytest
+invocation in the integration evidence log. For a venv with its own CPU PyTorch, run pytest
 directly as shown in the local setup.
 
-Use a fresh compatible environment with the full Cookbook package for eventual
-model rendering and training. See [executed evidence](evidence/phase1.txt).
+Use a fresh compatible environment with the full Cookbook package for actual
+model rendering and training.
+
+To run the official adapter's offline tests, install `.[test,official]` and
+put the pinned benchmark checkout at `../upstream-elt-bench` or set
+`ELT_BENCH_TEST_CHECKOUT`. The evaluator tests execute the pinned scripts
+with a synthetic warehouse connector. Set `ELT_TEST_TERRAFORM` to a Terraform
+executable for the provider-schema test. It runs `init -backend=false` and
+`validate` against a loopback placeholder, which does not call Airbyte.
+Use a local provider mirror via `TF_CLI_CONFIG_FILE` if the Terraform
+download endpoint is unavailable.
 
 ## Episode and reward
 
 - `contracts.py` defines the task, limits, backend protocol, and grade.
-  `episode.py` implements the six tools and owns the per-rollout state.
+  `episode.py` implements the tools and owns the per-rollout state.
   `local.py` owns source extraction and SQLite materialization.
   `verifier.py` reads the hidden fixture targets.
 - A rollout creates its own temporary workspace and DB. Reading the task is
@@ -84,9 +98,10 @@ model rendering and training. See [executed evidence](evidence/phase1.txt).
 - The Cookbook adapter uses `AgentToolMessageEnv` and
   `EnvFromMessageEnv` with sequential tool dispatch. The subclass tracks which
   turn received execution feedback. Group members have separate workspaces
-  and connections. They release them after grading. Default limits are 24
-  turns and 24 tool calls. The Cookbook rollout runner can also enforce the
-  90-second, 8,192 sampled-token, 2,048 per-turn token and 24,576 context limits.
+  and connections. They release them after grading. Local defaults are 24
+  turns and 24 tool calls. The Cookbook runner enforces a 16,384 context cap,
+  at most 8,192 sampled tokens and at most 2,048 tokens per turn. Remote runs
+  allow 32 tool calls and use mode-specific time limits.
 - Stage 1 is the fraction of required raw tables with exact row counts. Stage 2
   runs only after every Stage 1 check passes. It compares the full contents
   of each materialized model by unique key with exact null and integer handling
@@ -105,7 +120,7 @@ model rendering and training. See [executed evidence](evidence/phase1.txt).
   assumes a trusted host Python process. It does not measure generalization or
   deter an agent that was given the static fixture answers out of band.
 
-## Upstream audit and later phases
+## Upstream audit
 
 - [ELT-Bench `elt_bench++` at `3b068d5f15f64541d05fbc33a817e4b08c6bf173`](https://github.com/uiuc-kang-lab/ELT-Bench/tree/3b068d5f15f64541d05fbc33a817e4b08c6bf173).
   Inspected `agents/README.md`, `agents/run.py`, `agents/codex_agent/run.py`,
@@ -126,31 +141,89 @@ model rendering and training. See [executed evidence](evidence/phase1.txt).
   groups on its training path. [RL docs](https://tinker-docs.thinkingmachines.ai/cookbook/rl/)
   and [Custom environment tutorial](https://tinker-docs.thinkingmachines.ai/tutorials/cookbook-abstractions/custom-environment/).
 
-### Phase 2 | Official Snowflake rollout, pending authorization
+## Official Snowflake rollout
 
-Implement `official.snowflake_task` as a `TaskDefinition` backed by Airbyte and
-Snowflake. Follow the pinned benchmark's setup instructions for an isolated
-Airbyte/source stack. The adapter must expose sanitized `books` input and dbt
-artifacts and inject secrets only in the host runner. The replay needs a fresh
-run database with the `books` schema so the official grader can use its task
-name and expected rows. Provision and reset only that run's namespace. Obtain
-the published Snowflake ground truth in a host-only directory. Run both stages
-in a fresh, host-only output folder to avoid stale Stage 2 exports. Proposed
-upstream commands, after provisioning and adapter implementation:
+The implementation uses the official `books` task, source groups and Airbyte
+Terraform provider. The agent selects streams in `load.json` and writes one
+Snowflake SELECT for each of the three official models. The host creates the
+model tables directly with CTAS. Input task sections come from the pinned public
+configuration, schema CSVs and model YAML. Airbyte credentials, Snowflake
+credentials and grader files stay in the host process and private files.
+
+One approved rollout uses one Snowflake database for work and a separate
+database for replay. Both have the `BOOKS` schema. All resources are run-owned,
+Airbyte schedules are manual, and the host polls only the syncs it creates.
+The official CLI runs in a private copy of the evaluator with a fresh results
+folder. The output includes sanitized tabular grading evidence, submitted
+artifacts and sync provenance. A cleanup failure leaves a
+`cleanup-required.txt` file and may retain credential-bearing Terraform state
+in `private-recovery`. Keep the entire run directory private and review cleanup
+notices before using the result.
+
+Before an approved run, use a disposable checkout at the pinned SHA on a
+host with local Airbyte OSS and Docker. Follow the benchmark's setup for
+PostgreSQL, MongoDB, LocalStack and its custom API source. The `books` flat files
+also require access from Airbyte. In that disposable setup checkout, install the
+requirements, supply the private Snowflake JSON and run the upstream setup.
+Use an isolated, least-privilege role with a dedicated warehouse and support
+for creating and dropping its own temporary run databases. The Snowflake JSON
+requires `account`, `host`, `user`, `password`, `role`, and `warehouse`.
+The Airbyte workspace must have the pinned connector definitions.
 
 ```bash
-python setup/write_config.py --destination snowflake --credential "$HOST_CREDENTIAL_JSON"
-python evaluation/eva.py --folder "$FRESH_RUN_ID" --db-type snowflake --database "$RUN_DATABASE" --only books --credential "$HOST_CREDENTIAL_JSON" --gt-folder "$HOST_GT_SNOWFLAKE"
+# In the disposable ELT-Bench checkout on the approved host
+python -m pip install -r setup/requirements.txt
+bash setup/elt_setup.sh
+python setup/write_config.py --destination snowflake --credential "$ELT_SNOWFLAKE_CREDENTIAL_JSON" --dest "$ELT_PRIVATE_INPUT_ROOT"
+
+# In this repository's venv on a supported Cookbook platform
+python -m pip install -e '.[official,cookbook,test]'
+export ELT_BENCH_ROOT=/absolute/path/to/pinned-benchmark
+export ELT_BOOKS_INPUT_DIR="$ELT_PRIVATE_INPUT_ROOT/books"
+export ELT_GT_SNOWFLAKE=/absolute/path/to/private/gt_snowflake
+export ELT_AIRBYTE_URL=http://127.0.0.1:8000/api/public/v1/
+python -m elt_rl.run official-rollout --allow-paid --allow-warehouse --budget-usd 1 --out runs/books-001
 ```
 
-Retain the official `results.log` and `stage2.json`, when produced, along with
-the sanitized rollout trace and namespace provenance.
+Set `ELT_SNOWFLAKE_CREDENTIAL_JSON` and `TINKER_API_KEY` through your private
+environment before running. `ELT_GT_SNOWFLAKE` must contain the original
+`books/*.csv` reference files from the [pinned benchmark's ground-truth instructions](https://github.com/uiuc-kang-lab/ELT-Bench/blob/3b068d5f15f64541d05fbc33a817e4b08c6bf173/README.md#download-the-ground-truth).
+For each counted backend instance, execution is limited to two load attempts
+and four warehouse transform attempts. Submission permits one separate replay.
+The dollar estimate controls Tinker tokens. Warehouse costs depend on the
+operator's Snowflake resource monitor and Airbyte deployment.
 
-### Phase 3 | Tinker optimization, pending authorization
+## One Tinker LoRA update
 
-Add an `RLDataset` / `RLDatasetBuilder` around `ELTGroupBuilder` and reuse
-the pinned Cookbook's `train.main` path. Verify available models and spend
-limits at run time. Require real, varied within-group rewards and nonempty
-training datums after filtering and advantage computation. Record completed
-`forward_backward` and `optim_step` results, checkpoint, and spend. The final
-Google Doc and shared GitHub delivery follow the later-phase checklist.
+This command trains on the local fixture to isolate Tinker spend from Snowflake
+spend. Run it only after approval, with the full pinned Cookbook on a supported
+platform and `TINKER_API_KEY` set. `TINKER_PROJECT_ID` is optional for project
+selection.
+
+```bash
+python -m pip install -e '.[cookbook]'
+python -m elt_rl.run train-one --allow-paid --budget-usd 2 --group-size 3 --out runs/tinker-001
+```
+
+The command checks live public prices and server capabilities for
+`Qwen/Qwen3.5-4B` by default, samples one group from rank-16 LoRA weights and
+passes genuine rewards to the Cookbook's advantage and datum assembly.
+If all rewards are identical or there are no usable datums, it exits with
+status 2 before optimizer calls. With nonempty training data, it queues
+`forward_backward` and `optim_step`, waits for each result, then saves one
+checkpoint with a 24-hour TTL. It records each stage separately. Use the Tinker
+session link to reconcile actual billing. The local manifest records a
+token-based estimate and marks actual expenditure and credit balances as
+unavailable. [Tinker models and pricing](https://tinker-docs.thinkingmachines.ai/tinker/models/models_and_pricing/)
+
+## Optional changed-input check
+
+```powershell
+.\.venv\Scripts\python.exe -m elt_rl.robustness examples/customer_orders.jsonl
+.\.venv\Scripts\python.exe -m elt_rl.robustness examples/static_answer.jsonl
+```
+
+Both traces score 1.0 on the original fixture. On the changed input, the
+data-derived pipeline scores 1.0 and the hard-coded pipeline scores 0.35
+with correct Stage 1 counts and both Stage 2 models wrong. The second CLI
+invocation exits 2. The experiment leaves the official scoring path intact.
