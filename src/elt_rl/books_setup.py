@@ -83,7 +83,12 @@ def stage(checkout: Path, assets: Path, out: Path) -> dict:
     for name in RUNTIME_FILES:
         file = out / name
         file.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(checkout / name, file)
+        if file.suffix == ".sh":
+            # A Windows Git worktree can have CRLF where the pinned blob uses LF.
+            # Seeders run under Linux Bash, including when staged from Windows.
+            file.write_bytes((checkout / name).read_bytes().replace(b"\r\n", b"\n"))
+        else:
+            shutil.copyfile(checkout / name, file)
     for (group, _), source in source_files.items():
         if group == "flat_files":
             target = out / "flat-files"

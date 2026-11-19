@@ -82,7 +82,7 @@ def test_books_staging_rejects_bad_counts_before_creating_runtime(tmp_path):
     for name in RUNTIME_FILES:
         file = checkout / name
         file.parent.mkdir(parents=True, exist_ok=True)
-        file.write_text("pinned", encoding="utf-8")
+        file.write_bytes(b"pinned\r\n")
     assets = tmp_path / "assets"
     db = assets / "data-db/data/books"
     api = assets / "data-api/data/books"
@@ -100,6 +100,7 @@ def test_books_staging_rejects_bad_counts_before_creating_runtime(tmp_path):
     assert stage(checkout, assets, out)["custom_api"] == {"custom_api": 1}
     assert json.loads((out / "setup/mongo.jsonl").read_bytes()) == {"books": ["mongodb"]}
     assert (out / "books-template/config.yaml").read_bytes() == (book_dir / "config.yaml").read_bytes()
+    assert (out / "setup/sources/books/data.sh").read_bytes() == b"pinned\n"
 
 
 def test_books_binding_needs_published_ids_and_excludes_unrelated_secrets(checkout, tmp_path):
