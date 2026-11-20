@@ -472,8 +472,20 @@ grader files to `official/<run-database>/`.
 Warm the exact connector versions reported by the local Airbyte catalog in
 the kind node before starting the rollout. The adapter allows 600 seconds
 per Airbyte sync, Terraform operation and evaluator process. This accounts
-for the queue delay observed in the verified local sync. The rollout itself
-has a separate 30-minute limit.
+for the queue delay observed in the verified local sync. The rollout uses a
+60-minute Cookbook timeout to allow for the six-connection load and the
+submission replay. In-flight service operations retain their own timeouts.
+
+Run the local source preflight immediately before requesting execution. It
+compares the published custom connector manifest to the pinned checkout,
+provisions all six Airbyte connections with their original source settings and
+sync modes, and verifies the complete inventory and all 15 counts against
+`evaluation/table.json` in a disposable local PostgreSQL database. Its JSON
+includes the job IDs, expected and observed row counts, and cleanup status.
+The command requires loopback Airbyte and the `elt-postgres` Docker container.
+It does not contact Tinker or Snowflake with the flags shown below. Reseed
+LocalStack after a restart and rerun the probe after changing source inputs
+or network configuration.
 
 On the Windows host with the local Airbyte API forwarded to port `18000`, use
 the same Python runtime as the verified model pilot. Run preflight first. The
@@ -489,7 +501,10 @@ $env:TF_CLI_CONFIG_FILE = (Resolve-Path .venv-core/tf-tools/terraform.rc).Path
 $env:CHECKPOINT_DISABLE = '1'
 $env:HF_HUB_OFFLINE = '1'
 $env:TRANSFORMERS_OFFLINE = '1'
-.\.venv-core\Scripts\python.exe -m elt_rl.preflight official --airbyte-probe --snowflake-probe
+$docker = Join-Path $env:LOCALAPPDATA 'Programs/DockerDesktop/resources/bin/docker.exe'
+.\.venv-core\Scripts\python.exe -m elt_rl.preflight official --airbyte-probe --source-probe --docker $docker --docker-context desktop-linux
+# After the local probe passes and both services have been authorized:
+.\.venv-core\Scripts\python.exe -m elt_rl.preflight official --snowflake-probe
 # Run only after the approved service checks pass.
 .\.venv\Scripts\python.exe -c 'from pathlib import Path; import sys,runpy; sys.path.append(str(Path(sys.base_prefix) / ""Lib"" / ""site-packages"")); runpy.run_module(""elt_rl.run"", run_name=""__main__"")' official-rollout --allow-paid --allow-warehouse --budget-usd 1 --out runs/books-001
 ```

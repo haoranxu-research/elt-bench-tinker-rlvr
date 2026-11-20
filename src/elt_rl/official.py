@@ -369,16 +369,10 @@ def read_bundle(root: Path) -> dict:
     return bundle
 
 
-def snowflake_task(config: OfficialConfig, *, allow_paid: bool = False) -> TaskDefinition:
-    if not allow_paid:
-        raise ConfigurationError("official execution requires explicit paid-service approval")
-    check_checkout(config.checkout)
-    check_airbyte_url(config.airbyte_url)
-    if not shutil.which(config.terraform):
-        raise ConfigurationError("install Terraform or set ELT_TERRAFORM to its executable")
-    public_root = config.checkout / "elt-bench" / "snowflake" / "books"
-    public = _read_yaml(public_root / "config.yaml")
-    bound = read_bundle(config.books_input)
+def pinned_books_bundle(checkout: Path, books_input: Path) -> dict:
+    check_checkout(checkout, extra_paths=("setup/elt_snowflake.yaml",))
+    public = _read_yaml(checkout / "elt-bench" / "snowflake" / "books" / "config.yaml")
+    bound = read_bundle(books_input)
     available = streams(public)
     if streams(bound) != available:
         raise ConfigurationError("generated input stream manifest differs from pinned books")
@@ -386,6 +380,17 @@ def snowflake_task(config: OfficialConfig, *, allow_paid: bool = False) -> TaskD
     # connector IDs and the destination namespace come from the verified checkout.
     private = bound["Airbyte"]["config"]
     public["Airbyte"]["config"].update({name: private[name] for name in AIRBYTE_BINDINGS})
+    return public
+
+
+def snowflake_task(config: OfficialConfig, *, allow_paid: bool = False) -> TaskDefinition:
+    if not allow_paid:
+        raise ConfigurationError("official execution requires explicit paid-service approval")
+    check_airbyte_url(config.airbyte_url)
+    if not shutil.which(config.terraform):
+        raise ConfigurationError("install Terraform or set ELT_TERRAFORM to its executable")
+    public = pinned_books_bundle(config.checkout, config.books_input)
+    available = streams(public)
     credentials = read_credentials(config.credential_file)
     if any(not (config.ground_truth / "books" / f"{name}.csv").is_file() for name in MODELS):
         raise ConfigurationError("ELT_GT_SNOWFLAKE must contain official books ground truth CSVs")

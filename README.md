@@ -199,7 +199,11 @@ python -m elt_rl.preflight official
 With authorized service access, use `--airbyte-probe` for workspace and
 custom-source visibility and `--snowflake-probe` for login and warehouse
 visibility. The separately authorized `--namespace-probe` exercises create/drop.
-Actual sync and grading happen during the live rollout.
+Use `--source-probe` before authorizing the rollout to run all six pinned
+source connections and compare all 15 table counts in a disposable local
+PostgreSQL database. See the [Windows invocation](LIVE_SETUP.md#4-execute-and-clean-up-one-official-rollout).
+Snowflake loading and grading happen during the authorized rollout.
+[Executed full-source preflight](evidence/books-source-preflight.md)
 
 ```bash
 python -m pip install -e '.[official,cookbook]'

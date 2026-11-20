@@ -3,6 +3,7 @@
 import base64
 import json
 import os
+import re
 import subprocess
 import time
 from datetime import datetime, timezone
@@ -61,11 +62,12 @@ def select_streams(text: str, available: dict[str, dict[str, str]]) -> dict[str,
 
 
 def terraform_plan(config: dict, selected: dict[str, list[str]], database: str,
-                   credential: dict, server_url: str) -> dict:
+                   credential: dict | None, server_url: str) -> dict:
     airbyte = config["Airbyte"]["config"]
     ids = streams(config)
     resources: dict[str, dict] = {}
     outputs = {}
+    destination = "airbyte_destination_snowflake" if credential is not None else "airbyte_destination_postgres"
 
     def add(resource_type: str, key: str, payload: dict) -> None:
         resources.setdefault(resource_type, {})[key] = payload
@@ -83,23 +85,31 @@ def terraform_plan(config: dict, selected: dict[str, list[str]], database: str,
             "name": f"{database}-{key}", "status": "active",
             "schedule": {"schedule_type": "manual"},
             "source_id": ref(resource_type, key, "source_id"),
-            "destination_id": ref("airbyte_destination_snowflake", "books", "destination_id"),
+            "destination_id": ref(destination, "books", "destination_id"),
             "namespace_definition": airbyte["namespace_definition"],
             "configurations": {"streams": [{"name": name, "sync_mode": ids[group][name]} for name in names]},
         })
         outputs[key] = ref("airbyte_connection", key, "connection_id")
 
-    if "private_key_file" in credential:
+    if credential is None:
+        pg = config["postgres"]["config"]
+        destination_auth = {
+            "host": pg["host"], "port": pg["port"], "database": database, "schema": "books_probe",
+            "username": pg["user"], "password": pg["password"],
+            "ssl_mode": {"disable": {}}, "tunnel_method": {"no_tunnel": {}},
+        }
+    elif "private_key_file" in credential:
         key = {"private_key": Path(credential["private_key_file"]).read_text(encoding="ascii")}
         if credential.get("private_key_file_pwd"):
             key["private_key_password"] = credential["private_key_file_pwd"]
         destination_auth = {"key_pair_authentication": key}
     else:
         destination_auth = {"username_and_password": {"password": credential["password"]}}
-    add("airbyte_destination_snowflake", "books", {
+    add(destination, "books", {
         "name": f"{database}-books", "workspace_id": airbyte["workspace_id"],
-        "definition_id": airbyte["snowflake_definition_id"],
-        "configuration": {
+        "definition_id": (airbyte["snowflake_definition_id"] if credential is not None
+                          else "25c5221d-dce2-4163-ade9-739ef790f503"),
+        "configuration": destination_auth if credential is None else {
             "host": credential["host"], "database": database, "schema": "BOOKS",
             "warehouse": credential["warehouse"], "role": credential["role"],
             "username": credential["user"],
@@ -185,12 +195,17 @@ class AirbyteRun:
             result = subprocess.run(
                 [self.terraform, command, *args], cwd=self.directory, env=private_environment(),
                 stdout=subprocess.PIPE if command == "output" else subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL, timeout=self.timeout, check=True,
+                stderr=subprocess.PIPE if command == "apply" else subprocess.DEVNULL,
+                timeout=self.timeout, check=True,
             )
         except subprocess.TimeoutExpired:
             raise PipelineError(f"Airbyte Terraform {command} timed out") from None
         except subprocess.CalledProcessError as error:
-            raise PipelineError(f"Airbyte Terraform {command} failed (exit {error.returncode}); "
+            diagnostic = (error.stderr or b"").decode("utf-8", errors="replace")
+            addresses = sorted(set(re.findall(r"\bwith (airbyte_(?:connection|source_[a-z0-9_]+)\.[a-z][a-z0-9_]*),",
+                                              diagnostic)))
+            scope = f" for {', '.join(addresses)}" if addresses else ""
+            raise PipelineError(f"Airbyte Terraform {command} failed (exit {error.returncode}){scope}; "
                                 "check the private Airbyte workload logs") from None
         except OSError:
             raise PipelineError(f"could not launch Terraform {command}") from None

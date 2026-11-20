@@ -161,7 +161,19 @@ def official_checks(args: argparse.Namespace, settings: dict[str, str]) -> list[
         checks.append(_pending("snowflake", "use --snowflake-probe after approval to verify login and warehouse visibility"))
     if not args.namespace_probe:
         checks.append(_pending("namespace_isolation", "use both Snowflake flags after authorization to verify create/drop"))
-    checks.append(_pending("source_sync", "Airbyte source connectivity for all streams and write permissions require a live run"))
+    if args.source_probe:
+        from .source_probe import books_source_probe
+
+        evidence = {}
+        probe = _report("source_sync", lambda: books_source_probe(
+            Path(require("ELT_BENCH_ROOT")).resolve(), Path(require("ELT_BOOKS_INPUT_DIR")).resolve(),
+            require("ELT_AIRBYTE_URL"), settings["ELT_TERRAFORM"] or "terraform",
+            args.docker, args.docker_context, evidence,
+        ))
+        probe["evidence"] = evidence
+        checks.append(probe)
+    else:
+        checks.append(_pending("source_sync", "use --source-probe to discover and count all pinned streams locally"))
     return checks
 
 
@@ -225,6 +237,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("target", choices=("official", "tinker"))
     parser.add_argument("--env-file", type=Path, default=Path(".env"))
     parser.add_argument("--airbyte-probe", action="store_true")
+    parser.add_argument("--source-probe", action="store_true",
+                        help="Sync all pinned streams into disposable PostgreSQL on local Docker")
+    parser.add_argument("--docker", default="docker", help="Docker executable for --source-probe")
+    parser.add_argument("--docker-context", help="Local Docker context for --source-probe")
     parser.add_argument("--snowflake-probe", action="store_true")
     parser.add_argument("--namespace-probe", action="store_true")
     parser.add_argument("--model")
@@ -234,7 +250,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.namespace_probe and not args.snowflake_probe:
         parser.error("--namespace-probe requires --snowflake-probe and warehouse authorization")
-    if args.target == "tinker" and (args.airbyte_probe or args.snowflake_probe):
+    if args.target == "tinker" and (args.airbyte_probe or args.source_probe or args.snowflake_probe):
         parser.error("warehouse probe flags are only for the official preflight")
     settings = read_settings(args.env_file)
     checks = official_checks(args, settings) if args.target == "official" else tinker_checks(args, settings)

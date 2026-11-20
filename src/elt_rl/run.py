@@ -71,7 +71,8 @@ def main(argv: list[str] | None = None) -> int:
             config = EpisodeConfig(
                 Path(work_root), max_turns=24 if official else PILOT_TURNS, max_tool_calls=32,
                 execution_seconds=60 if official else 1,
-                rollout_seconds=1800 if official else 120,
+                # A full six-connection load precedes submission, which repeats it in isolation.
+                rollout_seconds=3600 if official else 120,
                 max_submissions=1 if official else 2,
             )
             (out / "pipelines").mkdir(mode=0o700)

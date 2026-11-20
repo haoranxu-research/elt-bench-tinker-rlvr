@@ -10,6 +10,7 @@ yaml = pytest.importorskip("yaml", reason="install the official extra")
 pytest.importorskip("sqlglot", reason="install the official extra")
 
 from elt_rl import official
+from elt_rl import source_probe
 from elt_rl.books_setup import AIRBYTE_FIELDS, RUNTIME_FILES, bind_airbyte, stage
 from elt_rl.airbyte import AirbyteRun, select_streams, streams, terraform_plan
 from elt_rl.contracts import EpisodeConfig, Grade, PipelineError
@@ -19,8 +20,9 @@ from elt_rl.official_sql import safe_select
 
 @pytest.mark.parametrize(("error", "message"), [
     (subprocess.TimeoutExpired(["private-secret-marker"], 600), "apply timed out"),
-    (subprocess.CalledProcessError(1, ["private-secret-marker"], stderr=b"private-secret-marker"),
-     r"apply failed \(exit 1\)"),
+    (subprocess.CalledProcessError(1, ["private-secret-marker"],
+                                  stderr=b"private-secret-marker\n  with airbyte_connection.s3,"),
+     r"apply failed \(exit 1\) for airbyte_connection\.s3"),
     (OSError("private-secret-marker"), "could not launch Terraform apply"),
 ])
 def test_airbyte_terraform_errors_are_actionable_without_secrets(tmp_path, monkeypatch, error, message):
@@ -80,8 +82,90 @@ def test_official_books_public_task_and_airbyte_plan(checkout, tmp_path, monkeyp
     assert modeled == {item.lower() for item in json.loads(
         (checkout / "evaluation/table.json").read_text())["books"]}
     assert plan["resource"]["airbyte_destination_snowflake"]["books"]["configuration"]["schema"] == "BOOKS"
+    local = terraform_plan(task.open_backend.keywords["bundle"], selected, "ELT_RL_TEST", None, config.airbyte_url)
+    snowflake = terraform_plan(task.open_backend.keywords["bundle"], selected, "ELT_RL_TEST", cred, config.airbyte_url)
+    assert {k: v for k, v in local["resource"].items() if k.startswith("airbyte_source_")} == {
+        k: v for k, v in snowflake["resource"].items() if k.startswith("airbyte_source_")
+    }
+    assert set(local["output"]["connections"]["value"]) == set(snowflake["output"]["connections"]["value"])
+    assert all(connection["destination_id"] == "${airbyte_destination_postgres.books.destination_id}"
+               for connection in local["resource"]["airbyte_connection"].values())
+    assert "airbyte_destination_snowflake" not in local["resource"]
     with pytest.raises(PipelineError):
         select_streams('{"sources":{"postgres":["../gold"]}}', available)
+
+
+@pytest.mark.parametrize("bad_count", [False, True])
+def test_books_source_probe_checks_every_row_count_and_cleans_up(checkout, tmp_path, monkeypatch, bad_count):
+    config, groups = source_probe._expectations(checkout)
+    config["Airbyte"]["config"].update(username="private-user", password="private-password",
+                                       workspace_id="workspace", custom_api_definition_id="connector")
+    expected = {name: count for tables in groups.values() for name, count in tables.items()}
+    monkeypatch.setattr(source_probe, "pinned_books_bundle", lambda *_args: config)
+    monkeypatch.setattr(source_probe, "check_published_manifest", lambda *_args: None)
+    monkeypatch.setattr(source_probe.shutil, "which", lambda name: name)
+    workspace = tmp_path / "probe"
+    workspace.mkdir()
+    monkeypatch.setattr(source_probe, "mkdtemp", lambda **_kwargs: str(workspace))
+    statements = []
+    cleaned = []
+
+    def psql(command, **_kwargs):
+        statement = command[-1]
+        statements.append(statement)
+        if statement.startswith("SELECT tablename"):
+            return "\n".join(expected)
+        if statement.startswith("SELECT count"):
+            name = statement.split('"')[1]
+            return str(expected[name] - (bad_count and name == "country"))
+        return ""
+
+    def provision(self, main_tf, plan, username, password):
+        assert main_tf == checkout / "setup/main.tf"
+        assert set(plan["output"]["connections"]["value"]) == {
+            "address_status", "order_status", "custom_api", "mongodb", "postgres", "s3",
+        }
+        assert (username, password) == ("private-user", "private-password")
+        self.jobs.append({"job_id": "1"})
+
+    monkeypatch.setattr(source_probe.subprocess, "check_output", psql)
+    monkeypatch.setattr(AirbyteRun, "provision", provision)
+    monkeypatch.setattr(AirbyteRun, "cleanup", lambda self: cleaned.append(self))
+    evidence = {}
+
+    def run_probe():
+        return source_probe.books_source_probe(checkout, tmp_path, "http://127.0.0.1:18000/api/public/v1",
+                                              "terraform", "docker", None, evidence)
+
+    if bad_count:
+        with pytest.raises(ValueError, match="country: 231 vs 232"):
+            run_probe()
+    else:
+        assert run_probe().startswith("15 pinned streams matched")
+        assert evidence["rows"] == expected
+    assert len(evidence["rows"]) == len(expected) == 15
+    assert evidence["cleanup"] == "complete" and len(cleaned) == 1
+    assert statements[-1] == "DROP DATABASE " + evidence["database"]
+    assert not workspace.exists()
+
+
+def test_source_probe_rejects_a_different_published_manifest(checkout, monkeypatch):
+    calls = []
+
+    def request(self, method, route, body):
+        calls.append((method, route, body))
+        if route.endswith("/list"):
+            return {"projects": [{"sourceDefinitionId": "definition", "builderProjectId": "project",
+                                  "activeDeclarativeManifestVersion": 2}]}
+        return {"declarativeManifest": {"manifest": {"type": "DeclarativeSource"}}}
+
+    monkeypatch.setattr(AirbyteRun, "_request", request)
+    with pytest.raises(ValueError, match="differs from the pinned"):
+        source_probe.check_published_manifest(checkout, "http://127.0.0.1:18000/api/public/v1", {
+            "username": "private", "password": "private", "workspace_id": "workspace",
+            "custom_api_definition_id": "definition",
+        })
+    assert calls[-1][2] == {"workspaceId": "workspace", "builderProjectId": "project", "version": 2}
 
 
 
