@@ -267,6 +267,76 @@ def test_snowflake_sql_accepts_join_aggregation_and_windows():
     assert "ROW_NUMBER()" in sql
 
 
+def test_books_reports_independent_sql_failures_in_one_pass():
+    backend = object.__new__(official.SnowflakeBooksBackend)
+    backend.raw_tables = frozenset({"publisher", "customer", "author"})
+    backend.transform_attempts = 0
+    backend._run_sql = lambda *_args, **_kwargs: pytest.fail("invalid batch reached Snowflake")
+    files = {
+        "publishers.sql": "WITH publisher_book_counts AS (\n"
+                          " SELECT * FROM publisher JOIN publisher_book_counts USING (publisher_id)\n"
+                          ") SELECT * FROM publisher_book_counts",
+        "customers.sql": "SELECT customer_id,\n ROUND(CAST(COUNT(*), 2) AS FLOAT) AS n\n"
+                         "FROM customer GROUP BY customer_id",
+        "authors.sql": "WITH wrote_fewer_total_pages AS (SELECT * FROM author)\n"
+                       "SELECT * FROM author\n"
+                       "JOIN wrote_fewer_total_pages_than_the_average USING (author_id)",
+    }
+    with pytest.raises(PipelineError) as captured:
+        backend.execute("transform", files)
+    feedback = str(captured.value)
+    assert "publishers.sql: line 2" in feedback and "relation PUBLISHER_BOOK_COUNTS" in feedback
+    assert "customers.sql: line 2" in feedback and "CAST requires" in feedback
+    assert "authors.sql: line 3" in feedback and "relation WROTE_FEWER_TOTAL_PAGES_THAN_THE_AVERAGE" in feedback
+
+    files["publishers.sql"] = "WITH publisher_book_counts AS (SELECT * FROM publisher) SELECT * FROM PUBLISHER_BOOK_COUNTS"
+    files["customers.sql"] = "SELECT customer_id,\n ROUND(COUNT(*) AS n) FROM customer GROUP BY customer_id"
+    with pytest.raises(PipelineError) as captured:
+        backend.execute("transform", files)
+    assert "publishers.sql" not in str(captured.value)
+    assert "customers.sql: line 2" in str(captured.value) and "authors.sql: line 3" in str(captured.value)
+    assert backend.transform_attempts == 0
+
+
+def test_books_quoted_cte_name_keeps_snowflake_case_sensitivity():
+    with pytest.raises(PipelineError, match="relation AUTHORS is neither"):
+        safe_select('WITH "authors" AS (SELECT * FROM author) SELECT * FROM AUTHORS', frozenset({"author"}))
+
+
+def test_books_warehouse_error_names_only_the_failing_artifact(monkeypatch):
+    import snowflake.connector
+
+    class Warehouse:
+        def cursor(self):
+            return self
+
+        def close(self):
+            pass
+
+        def execute(self, statement, **_kwargs):
+            if statement.startswith("CREATE OR REPLACE TABLE PROBE.BOOKS.customers"):
+                raise snowflake.connector.errors.ProgrammingError(
+                    msg="line 1 at position 90 invalid identifier 'CA.COUNTRY_ID' private-credential-marker",
+                    sqlstate="42000",
+                )
+
+    monkeypatch.setattr(snowflake.connector, "connect", lambda **_kwargs: Warehouse())
+    backend = object.__new__(official.SnowflakeBooksBackend)
+    backend.database = "PROBE"
+    backend.query_timeout = 60
+    backend._connection_options = dict
+    backend.raw_tables = frozenset({"author"})
+    backend.transform_attempts = 0
+    files = {f"{name}.sql": "SELECT * FROM author" for name in official.MODELS}
+    with pytest.raises(PipelineError) as captured:
+        backend.execute("transform", files)
+    assert str(captured.value) == (
+        "customers.sql: Snowflake query failed (SQLSTATE 42000): "
+        "invalid identifier 'CA.COUNTRY_ID' (generated statement, line 1 at position 90)"
+    )
+    assert backend.transform_attempts == 1
+
+
 def test_official_stage_gate_uses_fresh_pinned_evaluator(checkout, tmp_path, monkeypatch):
     real_run = subprocess.run
     raw = frozenset({"author", "book"})

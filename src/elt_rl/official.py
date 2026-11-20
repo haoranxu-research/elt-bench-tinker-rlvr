@@ -155,13 +155,16 @@ class SnowflakeBooksBackend:
                                    "QUERY_TAG": self.database},
         }
 
-    def _run_sql(self, statements: list[str]):
+    def _run_sql(self, statements: list[str], *, artifact_names: Mapping[int, str] | None = None):
         import snowflake.connector
+        artifact = None
         try:
             with closing(snowflake.connector.connect(**self._connection_options())) as connection:
                 with closing(connection.cursor()) as cursor:
-                    for statement in statements:
+                    for index, statement in enumerate(statements):
+                        artifact = artifact_names.get(index) if artifact_names else None
                         cursor.execute(statement, timeout=self.query_timeout, num_statements=1)
+                    artifact = None
                     return cursor.fetchall()
         except snowflake.connector.errors.Error as error:
             # Syntax/identifier errors are repairable. Never echo connector config or raw errors.
@@ -170,11 +173,15 @@ class SnowflakeBooksBackend:
                 state = "unknown"
             detail = ""
             if state.startswith("42") and isinstance(error.msg, str):
-                match = re.search(r"(invalid identifier '[A-Z0-9_.$]+'|unexpected '[A-Z0-9_.$]+'|line \d+ at position \d+)",
-                                  error.msg, re.IGNORECASE)
-                if match:
-                    detail = ": " + match.group(0)
-            raise PipelineError(f"Snowflake query failed (SQLSTATE {state}){detail}") from None
+                identifier = re.search(r"(invalid identifier|unexpected) '[A-Z0-9_.$]{1,80}'",
+                                       error.msg, re.IGNORECASE)
+                location = re.search(r"\bline [0-9]{1,6} at position [0-9]{1,6}\b", error.msg, re.IGNORECASE)
+                if identifier:
+                    detail += f": {identifier[0]}"
+                if location:
+                    detail += f" ({'generated statement, ' if artifact else ''}{location[0]})"
+            prefix = f"{artifact}: " if artifact else ""
+            raise PipelineError(f"{prefix}Snowflake query failed (SQLSTATE {state}){detail}") from None
 
     def execute(self, stage: Stage, artifacts: Mapping[str, str]) -> str:
         if stage == "load":
@@ -185,7 +192,16 @@ class SnowflakeBooksBackend:
             self._load(selected)
             return "Airbyte load finished. " + self.inspect()
         from .official_sql import safe_select
-        models = {name: safe_select(artifacts[f"{name}.sql"], self.raw_tables) for name in MODELS}
+        models = {}
+        errors = []
+        for name in MODELS:
+            filename = f"{name}.sql"
+            try:
+                models[name] = safe_select(artifacts[filename], self.raw_tables)
+            except PipelineError as error:
+                errors.append(f"{filename}: {error}")
+        if errors:
+            raise PipelineError("Fix the SQL files below before running transform:\n" + "\n".join(errors))
         if self.transform_attempts >= 4:
             raise PipelineError("official transform attempt limit reached")
         self.transform_attempts += 1
@@ -193,7 +209,7 @@ class SnowflakeBooksBackend:
             f"USE DATABASE {self.database}", "USE SCHEMA BOOKS",
             *(f"CREATE OR REPLACE TABLE {self.database}.BOOKS.{name} AS {sql}"
               for name, sql in models.items()),
-        ])
+        ], artifact_names={index: f"{name}.sql" for index, name in enumerate(models, start=2)})
         return "Snowflake transform finished. " + self.inspect()
 
     def _load(self, selected: dict[str, list[str]]) -> None:
