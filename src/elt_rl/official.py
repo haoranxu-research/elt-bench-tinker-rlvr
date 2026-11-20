@@ -196,12 +196,16 @@ class SnowflakeBooksBackend:
         errors = []
         for name in MODELS:
             filename = f"{name}.sql"
+            if filename not in artifacts:
+                continue
             try:
                 models[name] = safe_select(artifacts[filename], self.raw_tables)
             except PipelineError as error:
                 errors.append(f"{filename}: {error}")
         if errors:
             raise PipelineError("Fix the SQL files below before running transform:\n" + "\n".join(errors))
+        if not models:
+            raise PipelineError("provide at least one saved SQL file")
         if self.transform_attempts >= 4:
             raise PipelineError("official transform attempt limit reached")
         self.transform_attempts += 1
@@ -417,12 +421,14 @@ def snowflake_task(config: OfficialConfig, *, allow_paid: bool = False) -> TaskD
         "Read the model sections, then write publishers.sql, customers.sql and authors.sql "
         "as one Snowflake SELECT each using unqualified raw table names. Ordinary SQL joins, "
         "aggregates, CTEs and window functions are allowed. The host materializes the SELECTs. "
-        "Run the transform stage, use the warehouse feedback to repair errors, and submit.\n"
+        "Run transform and repair the named files. To isolate a fault, call execute_pipeline "
+        "with stage=transform and file set to one saved filename. If you cannot finish all "
+        "three, test at least one file and use submit_pipeline with mode=partial on a later turn.\n"
         + "\n".join(f"{name}: {', '.join(available[name])}" for name in GROUPS)
     )
     raw_tables = frozenset(name for group in available.values() for name in group)
     return TaskDefinition(
         "books", instructions, ("load.json",), tuple(f"{name}.sql" for name in MODELS),
         partial(SnowflakeBooksBackend, config=config, bundle=public, credentials=credentials, raw_tables=raw_tables),
-        _verify, _source_sections(config.checkout, public),
+        _verify, _source_sections(config.checkout, public), partial_transforms=True,
     )

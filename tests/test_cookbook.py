@@ -160,6 +160,35 @@ def test_official_tool_trace_retains_feedback_even_without_submission(tmp_path):
     asyncio.run(run())
 
 
+def test_unsubmitted_official_artifact_is_retained_with_no_graded_files(tmp_path):
+    async def run():
+        evidence = tmp_path / "pipelines"
+        evidence.mkdir()
+        builder = ELTGroupBuilder(
+            EpisodeConfig(tmp_path), cast(Renderer, ScriptedRenderer()), 1,
+            task_factory=lambda: replace(local_task(), task_id="books", partial_transforms=True),
+            evidence_dir=evidence,
+        )
+        env, = await builder.make_envs()
+        episode, = builder.episodes
+        name = episode.workspace.name
+        actions = [json.loads(line) for line in TRACE.read_text(encoding="utf-8").splitlines()]
+        try:
+            await env.initial_observation()
+            await env.step(list(json.dumps(actions[:4]).encode()))
+            result = await env.step(list(b"[]"))
+            assert result.episode_done and result.reward == 0
+        finally:
+            await builder.cleanup()
+        assert not episode.workspace.exists()
+        assert (evidence / name / "customer_totals.sql").read_text(encoding="utf-8") == actions[3]["arguments"]["content"]
+        assert json.loads((evidence / f"{name}.submission.json").read_bytes()) == {
+            "submitted": False, "transforms": [],
+        }
+
+    asyncio.run(run())
+
+
 def test_cookbook_rollouts_produce_real_advantages_and_datums(tmp_path):
     from tinker_cookbook.completers import TokensWithLogprobs
     from tinker_cookbook.rl.rollouts import do_group_rollout
@@ -276,13 +305,23 @@ def test_actual_qwen_renderer_tool_turns_offline(tmp_path):
 
     async def run():
         renderer = make_renderer(DEFAULT_MODEL, DEFAULT_RENDERER, offline=True)
-        builder = ELTGroupBuilder(EpisodeConfig(tmp_path), renderer, 1)
+        builder = ELTGroupBuilder(EpisodeConfig(tmp_path), renderer, 1,
+                                  task_factory=lambda: replace(local_task(), partial_transforms=True))
         env, = await builder.make_envs()
         actions = [json.loads(line) for line in TRACE.read_text(encoding="utf-8").splitlines()]
+        actions[-1]["arguments"]["mode"] = "complete"
         saw_bad_query = False
         try:
             prompt, stop = await env.initial_observation()
             assert prompt.length > 0 and stop
+            request = ("<tool_call>\n<function=execute_pipeline>\n"
+                       "<parameter=stage>\ntransform\n</parameter>\n"
+                       "<parameter=file>\norder_totals.sql\n</parameter>\n"
+                       "</function>\n</tool_call><|im_end|>")
+            message, termination = renderer.parse_response(renderer.tokenizer.encode(request, add_special_tokens=False))
+            assert termination.is_clean
+            call, = message["tool_calls"]
+            assert json.loads(call.function.arguments) == {"stage": "transform", "file": "order_totals.sql"}
             for action in actions:
                 body = "\n".join(f"<parameter={key}>\n{value}\n</parameter>"
                                  for key, value in action["arguments"].items())

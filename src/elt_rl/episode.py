@@ -12,14 +12,21 @@ from .contracts import EpisodeConfig, Grade, PipelineError, TaskDefinition
 class ToolSpec:
     description: str
     arguments: tuple[str, ...] = ()
+    optional: tuple[str, ...] = ()
 
     def schema(self) -> dict:
-        properties = {key: {"type": "string"} for key in self.arguments}
+        properties = {key: {"type": "string"} for key in (*self.arguments, *self.optional)}
         if "content" in properties:
             properties["content"] = {
                 "type": ["string", "object"],
                 "description": "SQL or JSON text. For load.json, a JSON object is also accepted.",
             }
+        if "stage" in properties:
+            properties["stage"]["enum"] = ["load", "transform"]
+        if "file" in properties:
+            properties["file"]["description"] = "Optional approved SQL filename, only for transform."
+        if "mode" in properties:
+            properties["mode"].update(enum=["complete", "partial"], default="complete")
         return {
             "type": "object",
             "properties": properties,
@@ -32,16 +39,22 @@ TOOLS = {
     "read_task": ToolSpec("Read the current ELT task and its input and output schemas."),
     "read_task_section": ToolSpec("Read a named task section listed by read_task.", ("section",)),
     "list_workspace": ToolSpec("List saved pipeline artifacts."),
-    "write_pipeline_file": ToolSpec("Save text to a task-approved artifact.", ("path", "content")),
-    "execute_pipeline": ToolSpec("Run and get feedback for load or transform.", ("stage",)),
+    "write_pipeline_file": ToolSpec("Write or replace one approved file. Put the full SQL text in content, with no Markdown fences. Saving does not execute it.", ("path", "content")),
+    "execute_pipeline": ToolSpec("Run saved files only. Pass stage=load for load.json or stage=transform for the SQL files. This tool does not accept SQL.", ("stage",)),
     "inspect_warehouse": ToolSpec("Read the current materialized table names and row counts."),
-    "submit_pipeline": ToolSpec("Submit the tested pipeline for fresh replay and grading."),
+    "submit_pipeline": ToolSpec("Grade saved files in a fresh warehouse. Call with no arguments on a later turn after a successful transform. This tool does not accept SQL."),
+}
+
+BOOKS_TOOLS = {
+    **TOOLS,
+    "execute_pipeline": ToolSpec(TOOLS["execute_pipeline"].description + " To test one saved SQL file, also pass file.", ("stage",), ("file",)),
+    "submit_pipeline": ToolSpec("Grade saved files tested on earlier turns in a fresh warehouse. Call with {} when all pass, or mode=partial to grade only the files that pass if you cannot finish. No SQL arguments.", optional=("mode",)),
 }
 
 INITIAL_INSTRUCTION = (
-    "Read the task with read_task. Configure and execute load, then write and run "
-    "transformations. Use feedback to repair errors and submit the successfully "
-    "tested artifacts. Use a separate turn after execution feedback to submit."
+    "First call read_task. Save load.json and each SQL file with write_pipeline_file(path, content). "
+    "Only write_pipeline_file persists SQL. Execute load, save each SQL file, then execute transform. "
+    "For a SQL error, rewrite the named file and execute again. Reserve a later turn to submit after execution succeeds."
 )
 
 
@@ -72,10 +85,12 @@ class ELTEpisodeState:
         self._inspected_task = False
         self._loaded = False
         self._tested_turn: int | None = None
+        self._tested_files: dict[str, int] = {}
         self._last_turn = 0
         self._calls = 0
         self._submission_attempts = 0
         self._grade: Grade | None = None
+        self.submitted_files: tuple[str, ...] = ()
 
     def __enter__(self) -> "ELTEpisodeState":
         return self
@@ -114,11 +129,14 @@ class ELTEpisodeState:
             return Feedback(value[:self.config.max_output_chars], self._grade is not None)
 
     def _call(self, name: str, arguments: object, turn: int) -> str:
-        spec = TOOLS.get(name)
+        spec = self.tools.get(name)
         if spec is None:
             raise PipelineError("unknown tool")
-        if not isinstance(arguments, dict) or set(arguments) != set(spec.arguments):
-            raise PipelineError("invalid tool arguments")
+        if (not isinstance(arguments, dict) or not set(spec.arguments) <= arguments.keys()
+                or arguments.keys() - set((*spec.arguments, *spec.optional))):
+            allowed = ", ".join((*spec.arguments, *spec.optional)) or "no arguments"
+            hint = " Save SQL using write_pipeline_file(path, content)." if name in {"execute_pipeline", "submit_pipeline"} else ""
+            raise PipelineError(f"invalid tool arguments for {name}; allowed: {allowed}.{hint}")
         # The Qwen XML parser decodes a JSON-looking parameter into a Python
         # object even when the model intended to write that JSON verbatim.
         if name == "write_pipeline_file" and arguments["path"] == "load.json" and isinstance(arguments["content"], dict):
@@ -138,11 +156,15 @@ class ELTEpisodeState:
             "list_workspace": self._list_workspace,
             "read_task_section": self._read_task_section,
             "write_pipeline_file": self._write,
-            "execute_pipeline": lambda stage: self._execute(stage, turn),
+            "execute_pipeline": lambda stage, file=None: self._execute(stage, turn, file),
             "inspect_warehouse": self.backend.inspect,
-            "submit_pipeline": lambda: self._submit(turn),
+            "submit_pipeline": lambda mode="complete": self._submit(turn, mode),
         }
         return handlers[name](**arguments)
+
+    @property
+    def tools(self) -> dict[str, ToolSpec]:
+        return BOOKS_TOOLS if self.task.partial_transforms else TOOLS
 
     def _read_task_section(self, section: str) -> str:
         if section not in self.task.sections:
@@ -154,6 +176,14 @@ class ELTEpisodeState:
         return self.task.load_artifacts + self.task.transform_artifacts
 
     def _list_workspace(self) -> str:
+        if self.task.partial_transforms:
+            return ", ".join(
+                f"{name}: " + (
+                    "tested" if name in self._tested_files or (name in self.task.load_artifacts and self._loaded)
+                    else "saved, needs execution" if (self.artifact_dir / name).is_file() else "missing"
+                )
+                for name in self._allowed
+            )
         return ", ".join(name for name in self._allowed if (self.artifact_dir / name).is_file()) or "(empty)"
 
     def _write(self, path: str, content: str) -> str:
@@ -167,21 +197,35 @@ class ELTEpisodeState:
             raise PipelineError("artifact must be valid UTF-8") from None
         if len(encoded) > self.config.max_artifact_bytes:
             raise PipelineError("artifact exceeds size limit")
-        (self.artifact_dir / path).write_bytes(encoded)
+        target = self.artifact_dir / path
+        if self.task.partial_transforms and target.is_file() and target.read_bytes() == encoded:
+            return f"{path} already contains these bytes. Use list_workspace to check execution status."
+        target.write_bytes(encoded)
         self._tested_turn = None
+        self._tested_files.pop(path, None)
         if path in self.task.load_artifacts:
             self._loaded = False
-        return f"saved {path}"
+            self._tested_files.clear()
+        if not self.task.partial_transforms:
+            return f"saved {path}"
+        stage = "load" if path in self.task.load_artifacts else "transform"
+        return f"saved {path} ({len(encoded)} bytes). Next: execute_pipeline with stage={stage}."
 
     def _read(self, names: tuple[str, ...]) -> dict[str, str]:
-        if any(not (self.artifact_dir / name).is_file() for name in names):
-            raise PipelineError("write all required artifacts for this stage")
+        missing = [name for name in names if not (self.artifact_dir / name).is_file()]
+        if missing:
+            raise PipelineError("write missing files using write_pipeline_file: " + ", ".join(missing))
         return {name: (self.artifact_dir / name).read_text(encoding="utf-8") for name in names}
 
-    def _execute(self, stage: str, turn: int) -> str:
+    def _execute(self, stage: str, turn: int, file: str | None = None) -> str:
+        if file is not None and (stage != "transform" or file not in self.task.transform_artifacts):
+            raise PipelineError("file must be an approved SQL filename used with stage=transform")
         if stage == "load":
+            if self.task.partial_transforms and self._loaded:
+                return "load.json is already loaded. Save the required SQL files and execute transform."
             self._loaded = False
             self._tested_turn = None
+            self._tested_files.clear()
             result = self.backend.execute("load", self._read(self.task.load_artifacts))
             self._loaded = True
             return result
@@ -189,27 +233,52 @@ class ELTEpisodeState:
             self._tested_turn = None
             if not self._loaded:
                 raise PipelineError("execute load successfully first")
-            result = self.backend.execute("transform", self._read(self.task.transform_artifacts))
+            names = (file,) if file is not None else self.task.transform_artifacts
+            if file is not None:
+                self._tested_files.pop(file, None)
+            result = self.backend.execute("transform", self._read(names))
             self._tested_turn = turn
+            self._tested_files.update(dict.fromkeys(names, turn))
+            if self.task.partial_transforms:
+                return result + " Tested: " + ", ".join(names) + ". Submit on a later turn once ready."
             return result
         raise PipelineError("stage must be load or transform")
 
-    def _submit(self, turn: int) -> str:
-        if self._tested_turn is None or self._tested_turn >= turn:
+    def _submit(self, turn: int, mode: str) -> str:
+        names = self.task.transform_artifacts
+        if self.task.partial_transforms:
+            if mode not in {"complete", "partial"}:
+                raise PipelineError("mode must be complete or partial")
+            if turn in self._tested_files.values():
+                raise PipelineError("submit on a later turn after reading the transform result")
+            ready = tuple(name for name in names if self._tested_files.get(name, turn) < turn)
+            if not ready:
+                raise PipelineError("execute current saved SQL successfully on an earlier turn before submitting")
+            if mode == "complete" and ready != names:
+                missing = ", ".join(name for name in names if name not in ready)
+                raise PipelineError(f"test these current SQL files on an earlier turn: {missing}. Or submit with mode=partial.")
+            names = ready
+        elif self._tested_turn is None or self._tested_turn >= turn:
             raise PipelineError("successfully execute current artifacts in an earlier turn before submitting")
         if self._submission_attempts >= self.config.max_submissions:
             raise PipelineError("submission replay limit reached")
         self._submission_attempts += 1
         self._tested_turn = None
+        self._tested_files.clear()
         replay_path = Path(mkdtemp(prefix="submission-", dir=self.workspace))
         replay = self.task.open_backend(replay_path, self.config)
         try:
             replay.execute("load", self._read(self.task.load_artifacts))
-            replay.execute("transform", self._read(self.task.transform_artifacts))
+            replay.execute("transform", self._read(names))
             grade = self.task.verify(replay)
         finally:
             replay.close()
         if not grade.submitted:
             raise PipelineError("the verifier did not accept this replay")
+        self.submitted_files = names
         self._grade = grade
-        return "pipeline submitted and graded"
+        if not self.task.partial_transforms:
+            return "pipeline submitted and graded"
+        stage2 = f"{grade.stage2:.6g}" if grade.stage2_ran else "skipped"
+        return (f"pipeline submitted and graded. Stage 1: {grade.stage1:.6g}. "
+                f"Stage 2: {stage2}. Reward: {grade.reward:.6g}.")

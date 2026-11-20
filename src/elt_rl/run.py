@@ -67,7 +67,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             task = local_task()
         from .training import run_remote
-        with TemporaryDirectory(prefix="elt-run-") as work_root:
+        with TemporaryDirectory(prefix="elt-run-", dir=out) as work_root:
             config = EpisodeConfig(
                 Path(work_root), max_turns=24 if official else PILOT_TURNS, max_tool_calls=32,
                 execution_seconds=60 if official else 1,

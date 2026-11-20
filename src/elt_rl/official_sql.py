@@ -45,8 +45,8 @@ def safe_select(sql: str, raw_tables: frozenset[str]) -> str:
         for node in query.walk():
             if type(node).__name__ in FORBIDDEN_NODES or isinstance(node, (exp.DDL, exp.DML)):
                 raise PipelineError("query uses a disallowed SQL operation")
-            # SQLGlot represents these SQL operators as functions, too.
-            if isinstance(node, exp.Func) and not isinstance(node, (exp.And, exp.Or)):
+            # SQLGlot represents these SQL operators and predicates as functions, too.
+            if isinstance(node, exp.Func) and not isinstance(node, (exp.And, exp.Or, exp.Exists)):
                 name = node.name.upper() if isinstance(node, exp.Anonymous) else node.sql_name()
                 if name not in FUNCTIONS:
                     raise _sql_error(f"function {_identifier_label(name)} is outside the allowlist",

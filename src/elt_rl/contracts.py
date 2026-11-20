@@ -71,3 +71,4 @@ class TaskDefinition:
     open_backend: Callable[[Path, EpisodeConfig], WarehouseBackend]
     verify: Callable[[WarehouseBackend], Grade]
     sections: Mapping[str, str] = field(default_factory=dict)
+    partial_transforms: bool = False

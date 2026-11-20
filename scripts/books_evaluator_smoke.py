@@ -150,14 +150,19 @@ def offline(args, artifacts):
     with duckdb.connect() as connection:
         check_local_database(connection, assets, expected, queries)
         positive, positive_queries = evaluate_local(connection, checkout, ground_truth, args.out, "matched", expected)
+        connection.execute("DROP TABLE books.authors")
+        partial, partial_queries = evaluate_local(connection, checkout, ground_truth, args.out, "partial", expected)
         connection.execute("DELETE FROM books.address_status WHERE status_id = (SELECT MIN(status_id) FROM books.address_status)")
         negative, negative_queries = evaluate_local(connection, checkout, ground_truth, args.out, "stage1-fail", expected)
     passed = (positive == Grade(1, 1, True, True) and positive_queries == {"count_queries": 15, "model_queries": 3}
+              and partial == Grade(1, 2 / 3, True, True)
+              and partial_queries == {"count_queries": 15, "model_queries": 3}
               and negative == Grade(14 / 15, 0, False, True)
               and negative_queries == {"count_queries": 15, "model_queries": 0})
     save_result(args.out, {
         "kind": "host_reference", "warehouse": "duckdb_transport", "passed": passed, **identity,
         "matched": {**result_fields(positive), **positive_queries},
+        "partial": {**result_fields(partial), **partial_queries},
         "stage1_fail": {**result_fields(negative), **negative_queries},
     })
     return 0 if passed else 2
@@ -177,7 +182,7 @@ def live(args, artifacts):
     for name in MODELS:
         safe_select(artifacts[f"{name}.sql"], frozenset(expected))
     args.out.mkdir(parents=True)
-    with TemporaryDirectory(prefix="books-evaluator-reference-") as directory:
+    with TemporaryDirectory(prefix="books-evaluator-reference-", dir=args.out) as directory:
         path = Path(directory)
         backend = task.open_backend(path, EpisodeConfig(path, execution_seconds=60))
         try:

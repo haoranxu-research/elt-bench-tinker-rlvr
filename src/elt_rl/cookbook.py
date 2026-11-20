@@ -16,7 +16,7 @@ from tinker_cookbook.rl.types import Env, EnvGroupBuilder, Metrics, RLDataset
 from tinker_cookbook.tool_use import AgentToolMessageEnv, Tool, ToolInput, ToolResult, simple_tool_result
 
 from .contracts import EpisodeConfig, TaskDefinition, TokenBudget
-from .episode import INITIAL_INSTRUCTION, TOOLS, ELTEpisodeState
+from .episode import INITIAL_INSTRUCTION, ELTEpisodeState
 from .local import local_task
 
 logger = logging.getLogger(__name__)
@@ -31,11 +31,11 @@ class EpisodeTool:
 
     @property
     def description(self) -> str:
-        return TOOLS[self.name].description
+        return self.episode.tools[self.name].description
 
     @property
     def parameters_schema(self) -> dict:
-        return TOOLS[self.name].schema()
+        return self.episode.tools[self.name].schema()
 
     def to_spec(self) -> ToolSpec:
         return {"name": self.name, "description": self.description, "parameters": self.parameters_schema}
@@ -61,7 +61,7 @@ class ELTMessageEnv(AgentToolMessageEnv):
     def __init__(self, episode: ELTEpisodeState, renderer: Renderer, trace_file: Path | None = None):
         self.turn = 0
         self.finished = False
-        tools: list[Tool] = [EpisodeTool(name, lambda: self.turn, episode, trace_file) for name in TOOLS]
+        tools: list[Tool] = [EpisodeTool(name, lambda: self.turn, episode, trace_file) for name in episode.tools]
         messages = renderer.create_conversation_prefix_with_tools(
             tools=[tool.to_spec() for tool in tools],
             system_prompt=INITIAL_INSTRUCTION,
@@ -155,11 +155,18 @@ class ELTGroupBuilder(EnvGroupBuilder):
     async def cleanup(self) -> None:
         for episode in self.episodes:
             try:
-                if self.evidence_dir and episode.grade().submitted:
+                submitted = episode.grade().submitted
+                has_official_artifacts = episode.task.partial_transforms and any(episode.artifact_dir.iterdir())
+                if self.evidence_dir and (submitted or has_official_artifacts):
                     await asyncio.to_thread(shutil.copytree, episode.artifact_dir,
                                             self.evidence_dir / episode.workspace.name)
+                    if episode.task.partial_transforms:
+                        metadata = self.evidence_dir / f"{episode.workspace.name}.submission.json"
+                        await asyncio.to_thread(metadata.write_text,
+                                                json.dumps({"submitted": submitted,
+                                                            "transforms": episode.submitted_files}), encoding="utf-8")
             except OSError:
-                logger.error("Could not retain submitted pipeline artifacts")
+                logger.error("Could not retain pipeline artifacts")
             finally:
                 try:
                     await asyncio.to_thread(episode.close)

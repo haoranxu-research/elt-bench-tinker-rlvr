@@ -274,6 +274,93 @@ def test_books_accepts_boolean_join_and_filter_conditions():
         frozenset({"customer", "address"}),
     )
     assert " AND " in sql and " OR " in sql
+    assert "EXISTS" in safe_select(
+        "SELECT c.id FROM customer c WHERE EXISTS (SELECT 1 FROM address a WHERE a.id = c.id)",
+        frozenset({"customer", "address"}),
+    )
+
+
+@pytest.mark.parametrize("mode", ["complete", "partial"])
+def test_books_write_repair_submit_and_fresh_replay(tmp_path, monkeypatch, mode):
+    from elt_rl.contracts import TaskDefinition
+    from elt_rl.episode import ELTEpisodeState
+    import snowflake.connector
+
+    records = {}
+    opened = []
+
+    class Cursor:
+        def execute(self, statement, **_kwargs):
+            if statement.startswith("CREATE OR REPLACE"):
+                warehouse = statement.split()[4].split(".")[0]
+                if "BAD_COLUMN" in statement:
+                    raise snowflake.connector.errors.ProgrammingError(
+                        msg="line 1 at position 63 invalid identifier 'BAD_COLUMN'", sqlstate="42000",
+                    )
+                records[warehouse].append(statement.split()[4].split(".")[-1])
+
+        def fetchall(self):
+            return []
+
+        def cursor(self):
+            return self
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(snowflake.connector, "connect", lambda **_kwargs: Cursor())
+
+    def open_backend(path, _config):
+        backend = object.__new__(official.SnowflakeBooksBackend)
+        backend.database = f"TEST{len(opened)}"
+        backend.query_timeout = 1
+        backend.raw_tables = frozenset({"author"})
+        backend.transform_attempts = 0
+        backend._connection_options = dict
+        backend.inspect = lambda: "author=1"
+        backend.close = lambda: None
+        execute = backend.execute
+        backend.execute = lambda stage, files: "load finished" if stage == "load" else execute(stage, files)
+        records[backend.database] = []
+        opened.append(path)
+        return backend
+
+    def verify(backend):
+        return Grade(1, len(records[backend.database]) / 3, True, True)
+
+    files = tuple(f"{name}.sql" for name in official.MODELS)
+    task = TaskDefinition("books", "three files", ("load.json",), files,
+                          open_backend, verify, partial_transforms=True)
+    with ELTEpisodeState(task, EpisodeConfig(tmp_path)) as episode:
+        def call(tool, turn, **args):
+            return episode.dispatch(tool, args, turn=turn)
+
+        call("read_task", 1)
+        assert "write_pipeline_file" in call("execute_pipeline", 1, stage="load", sql="SELECT 1").text
+        assert "missing" in call("list_workspace", 1).text
+        assert "execute_pipeline with stage=load" in call("write_pipeline_file", 2, path="load.json", content="{}").text
+        call("execute_pipeline", 2, stage="load")
+        assert "already loaded" in call("execute_pipeline", 2, stage="load").text
+        for name in files:
+            call("write_pipeline_file", 3, path=name,
+                 content="SELECT BAD_COLUMN FROM author" if name == "customers.sql" else "SELECT * FROM author")
+        assert "customers.sql: Snowflake query failed" in call("execute_pipeline", 4, stage="transform").text
+        assert not call("submit_pipeline", 5, mode="partial").submitted
+        assert "Tested: publishers.sql" in call("execute_pipeline", 5, stage="transform", file="publishers.sql").text
+        assert "already contains" in call("write_pipeline_file", 5, path="publishers.sql", content="SELECT * FROM author").text
+        assert "later turn" in call("submit_pipeline", 5, mode="partial").text
+        assert "authors.sql" in call("submit_pipeline", 6).text
+        call("write_pipeline_file", 6, path="customers.sql", content="SELECT * FROM author")
+        assert "customers.sql: saved, needs execution" in call("list_workspace", 6).text
+        if mode == "complete":
+            assert "Tested:" in call("execute_pipeline", 7, stage="transform").text
+        result = call("submit_pipeline", 8, mode=mode)
+        assert result.submitted and "Stage 1: 1" in result.text
+        assert "Reward: " in result.text
+        assert len(opened) == 2 and opened[0] != opened[1]
+        assert records["TEST1"] == (list(official.MODELS) if mode == "complete" else ["publishers"])
+        assert episode.submitted_files == (files if mode == "complete" else ("publishers.sql",))
+        assert episode.grade().reward == pytest.approx(1.0 if mode == "complete" else (35 + 65 / 3) / 100)
 
 
 def test_books_reports_independent_sql_failures_in_one_pass():
