@@ -91,6 +91,39 @@ control-plane container were left running. Completed images remain in
 Docker's local cache. No connector was published and no Airbyte sync ran.
 
 Resume with the Windows abctl command in the live setup guide. The existing
-kind cluster and completed images can be reused. Check the Airbyte health
-endpoint before publishing the connector and running the local PostgreSQL
-sync. Logs are under the ignored runs/books-machine directory.
+kind cluster and completed images can be reused. Logs are under the ignored
+`runs/books-machine/` directory.
+
+## Resumed deployment and successful local sync
+
+On November 20, Docker Desktop and all four source containers restarted.
+The Kubernetes control plane returned `Ready`. All 14 platform images were
+verified in Docker Desktop's cache. The resumed `abctl` installer still
+attempted registry pulls, which hit Docker Hub TLS handshake timeouts.
+The same pinned Airbyte 1.5.1 Helm chart was deployed directly in the
+existing kind cluster with `deploy/books-airbyte-values.yaml`. Images were
+imported individually into the node's containerd cache after the grouped
+import timed out. The initial Helm wait also timed out during image pulls.
+The bootloader completed and all ten long-running Airbyte pods subsequently
+reported `1/1 Running`.
+
+The server's loopback port-forward on `127.0.0.1:18000` returned
+`{"available":true}` from `/api/v1/health`. The upstream setup script
+published `Elt Snowflake` from the pinned manifest. The project binder
+generated the private books config, and `elt_rl.preflight official
+--airbyte-probe` passed the Airbyte, generated-input, and asset checks.
+Preflight exited 2 overall because Snowflake credentials remain unset.
+
+An actual Airbyte job copied the official `book_language` stream into the
+disposable PostgreSQL warehouse. Airbyte used `source-declarative-manifest`
+4.3.0 and `destination-postgres` 2.4.3. Job `1`, attempt `0`, succeeded on
+November 20 from 02:11:22 to 02:17:01 UTC. The job reported 27 emitted and
+27 committed records. A SQL count in `airbyte_smoke.book_language` returned
+27. The script cleaned up the temporary Airbyte resources and database. A
+separate PostgreSQL check found zero remaining smoke databases. Sanitized
+logs and row count evidence remain under `runs/books-machine/`. Full job
+detail is in the project's private configuration directory.
+
+This sync exercised the official source connector against local PostgreSQL.
+The separate scored Snowflake rollout remains unexecuted. No paid operation
+was performed.

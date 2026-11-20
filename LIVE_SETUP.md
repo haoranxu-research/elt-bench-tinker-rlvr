@@ -203,6 +203,29 @@ $abctl = './runs/books-machine/abctl-v0.30.4-windows-amd64/abctl.exe'
 & $abctl local status
 ```
 
+If `abctl` stalls contacting Docker Hub after its images are cached, the
+verified Airbyte 1.5.1 chart can also run directly in the existing kind cluster.
+Import cached images into the node before deploying. The Docker Desktop cache
+and the kind node's containerd cache are separate. The role of port `18000`
+below is to reach the Airbyte server through a loopback-only port-forward.
+Keep the port-forward open during setup, preflight and the rollout.
+
+```powershell
+$kubeconfig = Join-Path $env:USERPROFILE '.airbyte/abctl/abctl.kubeconfig'
+$kubectl = Join-Path $dockerBin 'kubectl.exe'
+& ./runs/books-machine/windows-amd64/helm.exe --kubeconfig $kubeconfig upgrade --install `
+  airbyte-abctl runs/books-machine/chart/airbyte --namespace airbyte-abctl --create-namespace `
+  --values deploy/books-airbyte-values.yaml --wait --timeout 20m
+& $kubectl --kubeconfig $kubeconfig -n airbyte-abctl port-forward --address 127.0.0.1 `
+  svc/airbyte-abctl-airbyte-server-svc 18000:8001
+```
+
+On a fresh local instance, complete the setup screen using the webapp service.
+Forward `svc/airbyte-abctl-airbyte-webapp-svc` from `18001:80` in a separate
+terminal and open `http://127.0.0.1:18001`. Use the server URL
+`http://127.0.0.1:18000` for connector setup and append `/api/public/v1` for
+`ELT_AIRBYTE_URL` on this route. [Local deployment evidence](evidence/books-docker-runtime.md)
+
 From an Airbyte workload pod, verify that `elt-postgres:5432`,
 `elt-mongodb:27017`, `elt-localstack:4566`, and `elt-api:5005` resolve and
 accept connections, and that the public flat-file URLs are reachable. The

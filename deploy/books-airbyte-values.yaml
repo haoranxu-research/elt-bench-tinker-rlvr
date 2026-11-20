@@ -1,0 +1,16 @@
+global:
+  airbyteUrl: http://localhost:8000
+  auth:
+    enabled: true
+    cookieSecureSetting: "false"
+  jobs:
+    resources:
+      limits:
+        cpu: "3"
+        memory: 4Gi
+postgresql:
+  image:
+    tag: "1.7.0-17"
+minio:
+  image:
+    repository: airbyte/minio
