@@ -10,6 +10,15 @@ or transformations and returns bounded feedback. `inspect_warehouse`
 reports materialized table counts. `submit_pipeline` requests fresh replay
 and grading.
 
+For official `books`, a write receipt names the saved file and the next
+execution step. The workspace lists missing, saved, and tested files.
+The agent can execute one saved SQL file to isolate an error. Changing a
+file invalidates its earlier test. Complete submission requires all
+three current files tested on earlier turns. Explicit partial submission
+replays just the current tested files. The official grader gives absent
+models zero Stage 2 credit. The run stores the candidate files and a
+separate submitted-file manifest.
+
 An episode proceeds from task inspection to source selection and load, then
 to transformations. The model can repair an error and rerun the stage.
 Editing invalidates earlier execution evidence. Submitting requires a

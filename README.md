@@ -195,6 +195,11 @@ A separate host reference passed both pinned evaluator stages offline.
 It used the staged `books` inputs and a local SQL transport.
 [Smoke results and one-load Snowflake procedure](evidence/books-evaluator-smoke.md)
 
+For the final official agent run, follow the [launch procedure](FINAL_HANDOFF.md#final-live-command).
+The official tools support testing a single saved SQL file and explicitly
+submitting the files that passed. Grading still uses a fresh warehouse
+and the official Stage 1 gate. [Final audit](evidence/books-final-audit.md)
+
 Follow the [official setup and cost guide](LIVE_SETUP.md#official-snowflake-books)
 to stage the assets, start the source services, publish the Airbyte connector,
 and create the private `books/config.yaml` using `elt_rl.books_setup bind-airbyte`.
@@ -216,7 +221,6 @@ Snowflake loading and grading happen during the authorized rollout.
 
 ```bash
 python -m pip install -e '.[official,cookbook]'
-python -m elt_rl.run official-rollout --allow-paid --allow-warehouse --budget-usd 1 --out runs/books-001
 ```
 
 Set `ELT_SNOWFLAKE_CREDENTIAL_JSON` and `TINKER_API_KEY` through the private

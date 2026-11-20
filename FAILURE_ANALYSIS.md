@@ -3,6 +3,12 @@
 See [the follow-up fix and verification](evidence/books-feedback-fix.md) for
 changes made after this investigation and replay of the archived trajectory.
 
+The [final workflow audit](evidence/books-final-audit.md) distinguishes
+this run, which wrote three SQL files, from the later local model smoke,
+which put SQL in actions that do not write files. The final workflow adds
+single-file execution and explicit partial submission. This historical
+trace still ends with reward zero.
+
 ## 1. Executive summary
 
 I investigated the rollout at commit `bbd1574` using the saved live trajectory

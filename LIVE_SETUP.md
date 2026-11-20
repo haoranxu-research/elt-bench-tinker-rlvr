@@ -417,6 +417,9 @@ headroom for initial loading, transforms, grading replay and both evaluators.
 Verify this with an administrator before authorizing the next run. The
 service-role preflight confirms login and warehouse visibility.
 
+Use the [final agent launch command](FINAL_HANDOFF.md#final-live-command)
+for a credentialed baseline rollout after separate authorization.
+
 The [host reference smoke procedure](evidence/books-evaluator-smoke.md)
 checks the evaluator independently of model behavior. After Snowflake
 authorization, it uses one fresh namespace and one Airbyte load. It
@@ -455,14 +458,8 @@ after DDL is authorized. It creates and drops a fresh transient database and
 
 ### 4. Execute and clean up one official rollout
 
-With separate authorization for Snowflake usage and Tinker model sampling,
-set the project Tinker settings and run one rollout. The token budget below
-is an example and does not constrain Snowflake costs. The runner performs its
-token estimate before sampling.
-
-```bash
-python -m elt_rl.run official-rollout --allow-paid --allow-warehouse --budget-usd 1 --out runs/books-001
-```
+The [handoff launch command](FINAL_HANDOFF.md#final-live-command) records the
+baseline, the sampling budget and the required separate authorizations.
 
 Keep the manifest, trajectory and artifacts, Airbyte job metadata, Stage 1
 log, Stage 2 results when the gate passes, and grade private. The replay uses
@@ -497,10 +494,8 @@ It does not contact Tinker or Snowflake with the flags shown below. Reseed
 LocalStack after a restart and rerun the probe after changing source inputs
 or network configuration.
 
-On the Windows host with the local Airbyte API forwarded to port `18000`, use
-the same Python runtime as the verified model pilot. Run preflight first. The
-rollout command requires explicit approval for both services and a new output
-directory. The example uses USD 1 as its Tinker estimate limit.
+On Windows, with the Airbyte API forwarded to port `18000`, run these
+checks before the [authorized launch](FINAL_HANDOFF.md#final-live-command).
 
 ```powershell
 $booksPrivate = Join-Path $env:LOCALAPPDATA 'ELTBenchBooks'
@@ -513,10 +508,7 @@ $env:HF_HUB_OFFLINE = '1'
 $env:TRANSFORMERS_OFFLINE = '1'
 $docker = Join-Path $env:LOCALAPPDATA 'Programs/DockerDesktop/resources/bin/docker.exe'
 .\.venv-core\Scripts\python.exe -m elt_rl.preflight official --airbyte-probe --source-probe --docker $docker --docker-context desktop-linux
-# After the local probe passes and both services have been authorized:
 .\.venv-core\Scripts\python.exe -m elt_rl.preflight official --snowflake-probe
-# Run only after the approved service checks pass.
-.\.venv\Scripts\python.exe -c 'from pathlib import Path; import sys,runpy; sys.path.append(str(Path(sys.base_prefix) / ""Lib"" / ""site-packages"")); runpy.run_module(""elt_rl.run"", run_name=""__main__"")' official-rollout --allow-paid --allow-warehouse --budget-usd 1 --out runs/books-001
 ```
 
 Record the rollout's UTC start and end times and preserve the run manifest's

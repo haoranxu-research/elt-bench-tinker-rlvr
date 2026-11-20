@@ -1,181 +1,96 @@
-# ELT-Bench RLVR audit and handoff
+# ELT-Bench RL environment handoff
 
-Project at `S:\STARTER\elt-tinker-phase1`. The implementation and submission
-materials are local. The [live-readiness update](evidence/live-readiness.md)
-records subsequent read-only production Tinker checks and staged official
-assets. The [authorized Tinker pilot](evidence/tinker-pilot.md) subsequently
-completed one genuine optimizer step with checkpoint verification. This
-document retains the audit execution history.
+## Acceptance status
 
-The later [official books runtime audit](evidence/books-runtime.md) records
-the 15-input validation, real local PostgreSQL, MongoDB, and REST checks,
-Compose validation, and the remaining Airbyte and Snowflake blockers. Its
-[runbook](LIVE_SETUP.md#official-snowflake-books) contains the current setup
-and cleanup commands for the credentialed rollout.
+| Requirement | Executed evidence | Status |
+| --- | --- | --- |
+| Credential-free, multi-turn ELT | The SQLite trace repaired a failed transform, submitted from a later turn, and earned 1.0 on a fresh replay. The test suite covers faulty input, failed transforms, partial and unsubmitted scores, and cleanup. | Complete |
+| Credentialed official task | The second real Qwen rollout loaded all 84,337 expected rows into Snowflake. It ended unsubmitted with reward 0. Neither evaluator ran against Snowflake. | Final scored agent rollout pending |
+| Real Tinker RL update | A previous pilot completed one optimizer step from execution-derived SQLite rewards and verified a changed probe and matching checkpoint metadata. | Complete |
+| Submission materials | The repository, reproduction guide, design, and professor summary are ready for review. | Local deliverables complete |
 
-The [second credentialed `books` attempt](evidence/books-snowflake-second.md)
-synced all 15 official streams through Airbyte into Snowflake. The agent
-observed all 84,337 rows at the expected counts. Its SQL failed validation
-and the episode ended unsubmitted with reward 0. The official evaluators
-remain unexecuted. The [first attempt](evidence/books-snowflake.md) records
-the preceding discovery failures and the initial partial load.
+[Prior credentialed rollout](evidence/books-snowflake-second.md) ·
+[Tinker optimizer evidence](evidence/tinker-pilot.md) ·
+[Design](DESIGN.md) · [Professor-facing summary](PROFESSOR_SUMMARY.md)
 
-## A. Completed implementations
+## Final engineering verification
 
-| Area | Implementation and audit findings |
-|---|---|
-| Episode lifecycle | `src/elt_rl/episode.py` accepts JSON objects for `load.json` from the real Qwen XML parser. The failing renderer trace reproduced the old string-only contract. Submission publishes a grade after replay and cleanup, and an unsuccessful replay consumes an attempt. `cookbook.py` rejects further message steps after termination. |
-| Official warehouse | `official.py`, `airbyte.py` and `official_sql.py` implement source selection, Terraform setup and sync, bounded transformations, private official evaluation, and owned-namespace cleanup. The audit added pinned-asset integrity checks, malformed provider-output handling, required Stage 2 reports, and recovery notices for ambiguous creation or failed cleanup. |
-| Official preflight | `preflight.py official` inspects assets and local configuration. Authorized options inspect Airbyte workspace and source inventory, Snowflake login and warehouse visibility, and create/drop capability in a transient namespace. Inventory checks leave actual stream sync unverified. |
-| Tinker path | `rendering.py` exercises the actual pinned Qwen tokenizer and Cookbook renderer. `training.py` uses the Cookbook's group rewards and datums and verifies sampled target IDs, behavior log probabilities, masks, and provenance. It skips constant or empty groups, waits for successful backward results before requesting one optimizer step, then probes action log probabilities and saves a checkpoint. `preflight.py tinker` runs the local renderer and budget checks without constructing Tinker clients. |
-| Credentials | `settings.py` reads recognized options from the environment and ignored `.env`. CLI errors sanitize foreign exceptions. A regression test supplies a synthetic key to the client boundary and checks both the error output and manifest. The provisioned key was excluded from Git and all recorded evidence. |
-| Robustness and delivery | `robustness.py --suite` executes eight local checks. [README](README.md), [DESIGN](DESIGN.md), and the [professor-facing summary](PROFESSOR_SUMMARY.md) are ready for review and transfer. |
+The host persists model-authored SQL, returns file-level validation and
+warehouse errors, and allows an individual saved file to be tested.
+An explicit partial submission replays only successfully tested current
+files. The grader uses the same Stage 1 gate and Stage 2 comparator.
+Changing any file invalidates its previous test. Repeating an unchanged
+successful load has no warehouse effect.
 
-## B. Executed evidence
+The final audit includes an archived sampled-token replay, a scripted
+interaction regression with simulated compiler responses, and the actual
+pinned evaluators over DuckDB. Those are separate from genuine model
+execution. The host evaluator smoke passed all 15 raw tables and all three
+model outputs. With one model absent, Stage 2 awarded two of three and the
+environment formula returned 0.7833333. With an incorrect raw count, Stage 2
+skipped all model queries. [Commands and evidence](evidence/books-final-audit.md)
 
-Windows PowerShell, Python 3.12.6, SQLite 3.45.3, Terraform 1.13.5 with
-Airbyte provider 0.6.5, and Tinker SDK 0.39.2. Both upstream working trees
-were clean. The exact pins were [ELT-Bench `3b068d5f15f64541d05fbc33a817e4b08c6bf173`](https://github.com/uiuc-kang-lab/ELT-Bench/tree/3b068d5f15f64541d05fbc33a817e4b08c6bf173)
-and [Cookbook `28de41edfcdd07ba3e7980f35d53a586024a2184`](https://github.com/thinking-machines-lab/tinker-cookbook/tree/28de41edfcdd07ba3e7980f35d53a586024a2184).
+## Before approval
 
-The baseline at `c7998ed31a56b88584a073183ad043f1805188f7` independently
-reported **45 passed in 24.97s**. The audited implementation reported
-**54 passed in 32.49s**, including provider validation, the real Qwen
-renderer, the pinned official evaluator with synthetic warehouse responses,
-cleanup regressions, and scripted Cookbook rollouts. The optimizer tests
-used a fake SDK client. The group with local warehouse rewards
-`[0.175, 1.0]` produced 20 aligned datums. The equal-reward case produced none.
-[Final pytest output](evidence/audit-final-tests.txt)
+- The fresh local Airbyte preflight passed on all six connections. It
+  matched all 15 pinned tables and 84,337 rows, with cleanup verified.
+  [Readiness evidence](evidence/books-final-audit.md)
+- In Snowflake, inspect the raw `SHOW WAREHOUSES LIKE 'ELT_BOOKS_WH'`
+  and `SHOW RESOURCE MONITORS LIKE 'ELT_BOOKS_MONITOR'` results as an
+  administrator. Confirm the actual monitor attachment, remaining headroom,
+  and suspension trigger. The service account can log in and has the
+  required grants, but cannot read that allowance.
+- Authorize one Tinker sampling-only rollout and one Snowflake rollout,
+  including its fresh grading replay. Leave Airbyte automatic retries off.
 
-The preflight and test commands were run from the project root. The
-Windows launcher appends the existing base Python CPU PyTorch path to the
-focused Cookbook environment. The provider used the checksum-verified
-local mirror from the earlier [integration evidence](evidence/integrations.txt).
+## Final live command
 
-```powershell
-Get-Content .env.example | ForEach-Object { Remove-Item -LiteralPath ('Env:' + $_.TrimEnd('=')) -ErrorAction SilentlyContinue }
-$env:HF_HUB_OFFLINE='1'
-$env:TRANSFORMERS_OFFLINE='1'
-$env:TINKER_TELEMETRY='0'
-$env:CHECKPOINT_DISABLE='1'
-$env:ELT_TEST_TERRAFORM=(Resolve-Path .venv-core/tf-tools/terraform.exe).Path
-$env:TF_CLI_CONFIG_FILE=(Resolve-Path .venv-core/tf-tools/terraform.rc).Path
-$env:ELT_TEST_REAL_RENDERER='1'
-.\.venv\Scripts\python.exe -c 'from pathlib import Path; import sys; sys.path.append(str(Path(sys.base_prefix) / ""Lib"" / ""site-packages"")); import pytest; raise SystemExit(pytest.main([""-q"", ""--basetemp"", "".venv/audit-final-pass""]))' | Tee-Object -FilePath evidence/audit-final-tests.txt
-.\.venv\Scripts\python.exe -c 'from pathlib import Path; import sys; sys.path.append(str(Path(sys.base_prefix) / ""Lib"" / ""site-packages"")); import pytest; raise SystemExit(pytest.main([""-q"", ""-s"", ""-k"", ""cookbook_rollouts_produce_real_advantages_and_datums"", ""--basetemp"", "".venv/audit-datums""]))'
-
-.\.venv-core\Scripts\python.exe -m elt_rl.cli examples/customer_orders.jsonl
-.\.venv-core\Scripts\python.exe -m elt_rl.robustness examples/customer_orders.jsonl
-.\.venv-core\Scripts\python.exe -m elt_rl.robustness examples/static_answer.jsonl
-.\.venv-core\Scripts\python.exe -m elt_rl.robustness --suite --repetitions 3
-
-$env:ELT_TERRAFORM=(Resolve-Path .venv-core/tf-tools/terraform.exe).Path
-.\.venv-core\Scripts\python.exe -m elt_rl.preflight official
-.\.venv\Scripts\python.exe -c 'from pathlib import Path; import sys; sys.path.append(str(Path(sys.base_prefix) / ""Lib"" / ""site-packages"")); from elt_rl.preflight import main; raise SystemExit(main([""tinker"", ""--budget-usd"", ""0.60""]))'
-```
-
-- **SQLite demo, exit 0.** Loaded two four-row sources, surfaced the
-  `wrong_amount` SQL error, accepted the repair and graded fresh replay
-  at Stage 1 **1.0**, Stage 2 **1.0**, reward **1.0**. [Trace](evidence/audit-local.txt)
-- **Robustness.** Data-derived comparison exited 0, hard-coded comparison
-  exited 2 as intended, and the full suite exited 0.
-  [Experiment JSON](evidence/audit-robustness.json)
-- **Official preflight, exit 2.** The adjacent pinned assets and Terraform
-  passed. Required live configuration was absent, so connectivity, stream
-  health and Snowflake permissions were left unverified.
-  [Official preflight output](evidence/audit-official-preflight.json)
-- **Tinker preflight, exit 0.** Key presence, the actual cached Qwen tokenizer
-  and renderer, and the reference budget passed. Project access and key
-  validity remain unverified. The estimate was **USD 0.4904** for three
-  members, including the verification forward pass. [Tinker preflight output](evidence/audit-tinker-preflight.json)
-
-The targeted Cookbook check printed `Scripted warehouse rewards [0.175, 1.0], 20 training datums`
-and reported **1 passed, 53 deselected in 12.11s**.
-
-The public Qwen tokenizer was cached without downloading weights or using
-credentials. The pinned revision is `851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a`.
-The official evaluator checks ran the pinned evaluator scripts with a
-synthetic connector. The Terraform test ran provider initialization and
-schema validation only. No Snowflake session, Airbyte sync, live Tinker
-sampling, backward pass, optimizer call or checkpoint creation was executed.
-
-## C. Remaining blockers
-
-- **Official `books`.** The checkout, Terraform and reference CSVs are
-  configured. The generated Airbyte `books` input bundle, reachable self-hosted
-  workspace and source services, Snowflake credential JSON and warehouse
-  still require setup.
-  Actual source sync, dedicated warehouse visibility, and role privileges
-  to create, transform, grade and clean up the run-owned databases remain
-  unverified.
-- **Tinker.** The authorized pilot completed the optimizer and checkpoint
-  checks using local SQLite rewards. Its published-rate token estimate
-  is available. The immediate read-only billing check returned no session
-  rows. [Pilot evidence](evidence/tinker-pilot.md)
-- **Submission.** The native Google Doc, GitHub publication, and contact with
-  the professor remain pending authorization.
-
-## D. Live execution checklist
-
-1. After warehouse approval, use the pinned benchmark setup in the
-   [runbook](LIVE_SETUP.md#official-snowflake-books). Set the official environment
-   entries, use a dedicated Snowflake role and monitored warehouse, and keep
-   the run output private. Probe Airbyte inventory, Snowflake login, and
-   transient namespace cleanup. The source sync itself is exercised by the
-   official rollout.
-2. After usage approval, run one bounded official rollout. Retain its
-   manifest, Airbyte job log, Stage 1 results and, if the gate passes, Stage 2
-   output. Inspect the run for `cleanup-required.txt`.
-3. The authorized Tinker pilot is complete. Retain its manifest, sampling
-   rewards, datum count, forward/backward and optimizer receipts, post-update
-   probe, and checkpoint metadata. Reconcile billing against the recorded
-   session when usage is posted. Any further run requires separate approval.
-
-```bash
-python -m elt_rl.preflight official --airbyte-probe --snowflake-probe --namespace-probe
-python -m elt_rl.run official-rollout --allow-paid --allow-warehouse --budget-usd 1 --out runs/books-001
-
-```
-
-The budgets estimate token costs using the public rate card. The official
-warehouse uses its own limit and the trainer's state probe does not measure
-downstream improvement. [Tinker pricing](https://tinker-docs.thinkingmachines.ai/tinker/models/models_and_pricing/)
-
-## E. Scientific observations
-
-Scores are from actual SQLite execution. Each case ran three times. Extra
-milliseconds are the median duration of the additional check on this host,
-measured separately from the baseline.
-
-| Case | Intervention | Original | Robust | Detected behavior | Extra ms |
-|---|---|---:|---:|---|---:|
-| Data-derived control | Change order assignments and amounts | 1.0 | 1.0 | Correct SQL follows the data | 66.77 |
-| Hard-coded aggregates | Same changed orders | 1.0 | 0.35 | Both materialized outputs are wrong despite complete loading | 68.43 |
-| Amount cutoff | Change one amount from 12.75 to 22.75 | 1.0 | 0.675 | A legitimate order is excluded by an unjustified cutoff | 78.17 |
-| Missing row | Add a customer with no orders | 1.0 | 0.675 | Required customer is absent | 84.33 |
-| Duplicate key | Add a customer with an existing name | 1.0 | 0.675 | Corrupted customer identifier duplicates another key | 84.24 |
-| Null assumption | Change one additional name to NULL | 1.0 | 0.675 | A missing name is incorrectly filled | 68.64 |
-| Order invariance | Reverse source order and output descending keys | 1.0 | 1.0 | Ordering alone does not change the grade | 66.71 |
-| Repeat execution | Load and transform twice in the same database | 1.0 | 1.0 | Local replace semantics preserve table contents | 33.48 |
-
-The new expected outputs were specified independently of the candidate SQL.
-The repeat case tests the local fixture's full refresh and replace behavior.
-These controlled examples do not establish model generalization, resistance
-to arbitrary reward hacking, or Snowflake costs.
-
-## F. Git status
-
-The audited implementation commit is
-`8afaeaa3f0c318e8032d0d253e6c9bbc9784654a`. The succeeding handoff commit
-contains the documentation and transcripts. To resolve its exact hash and
-recheck the local working tree:
+The authoritative model entry point is `elt_rl.run official-rollout`.
+Run the following only after approval and the administrator check. It uses
+the baseline Qwen3.5-4B with the pinned renderer, one group member, at most
+24 turns and 32 tool calls, and one explicit submission replay. Use a new
+private output path on S. [Official setup](LIVE_SETUP.md#official-snowflake-books)
 
 ```powershell
-git log -1 --format=%H -- FINAL_HANDOFF.md
+$private = Join-Path $env:LOCALAPPDATA 'ELTBenchBooks'
+$env:ELT_BOOKS_INPUT_DIR = Join-Path $private 'books'
+$env:ELT_SNOWFLAKE_CREDENTIAL_JSON = Join-Path $private 'snowflake.json'
+$env:ELT_AIRBYTE_URL = 'http://127.0.0.1:18000/api/public/v1'
+$env:TF_CLI_CONFIG_FILE = (Resolve-Path .venv-core/tf-tools/terraform.rc).Path
+$tmp = (New-Item -ItemType Directory -Force runs/books-final-tmp).FullName
+$env:TEMP = $tmp
+$env:TMP = $tmp
+$env:CHECKPOINT_DISABLE = '1'
+$env:HF_HUB_OFFLINE = '1'
+$env:TRANSFORMERS_OFFLINE = '1'
+.\.venv\Scripts\python.exe -c 'from pathlib import Path; import sys,runpy; sys.path.append(str(Path(sys.base_prefix) / ""Lib"" / ""site-packages"")); runpy.run_module(""elt_rl.run"", run_name=""__main__"")' official-rollout --allow-paid --allow-warehouse --budget-usd 0.15 --model Qwen/Qwen3.5-4B --renderer qwen3_5_disable_thinking --out runs/books-official-final 2>&1 | ForEach-Object ToString | Tee-Object runs/books-official-final-console.txt
+```
+
+The runner checks current rates before creating a Tinker session. The
+uncached worst-case token bound at checked public rates is **USD 0.13799424**.
+The prior Snowflake attempt used approximately **0.32 credits** through load
+and agent execution. Two comparable passes would use about **0.64 credits**;
+a continuously active standard Gen1 X-Small warehouse for 60 minutes uses
+1 credit. Allow for resumed periods, grading, and cleanup. These are planning
+estimates. The account's actual dollar rate and new usage are unverified.
+[Tinker rate card](https://tinker-docs.thinkingmachines.ai/tinker/models.json) ·
+[Snowflake warehouse billing](https://docs.snowflake.com/en/user-guide/warehouses-overview#impact-on-credit-usage-and-billing)
+
+After completion, retain the private manifest, token and tool traces,
+candidate file snapshots, submitted-file manifest, official Stage 1 and
+Stage 2 artifacts, and namespace cleanup evidence under `runs/`.
+Record billed usage from the provider and distinguish it from token-rate
+estimates and rounded monitor deltas. Report the actual reward and whether
+each stage executed. A missing submit continues to earn zero by design.
+
+The audit launched no paid workload. The historical zero-reward rollout is
+still the latest genuine agent result for the official task. No new charge,
+reward, or live grade was generated.
+
+## Repository verification
+
+```powershell
+git rev-parse HEAD
 git status --porcelain
-git ls-files .env
-git check-ignore .env
+git check-ignore .env runs/books-reference/sql/authors.sql
 ```
-
-The expected porcelain output and tracked-file lookup are empty. The ignored
-file check reports `.env` without reading it.
