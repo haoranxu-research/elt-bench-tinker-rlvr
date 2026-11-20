@@ -23,11 +23,10 @@ The post-update forward probe measured a change in action log probabilities,
 and checkpoint metadata matched the base model and LoRA rank. This
 establishes the update on local SQLite rewards.
 
-For the official `books` task, all 15 staged inputs match the pinned Stage 1
-row counts. In a credentialed attempt, Tinker sampled an agent trajectory and
-Airbyte wrote the official `address` stream to Snowflake. The agent observed
-1,000 rows. Discovery of the remaining sources failed on an absent LocalStack
-bucket and a Google Drive connection error. The episode ended without a
-submission and earned 0. Neither official evaluation stage ran.
-[Design](DESIGN.md) [Credentialed attempt evidence](evidence/books-snowflake.md)
+In the second credentialed `books` attempt, the Tinker-sampled agent selected
+all 15 official streams and observed all 84,337 expected rows in Snowflake.
+Airbyte completed six syncs with one attempt each. The agent's SQL failed
+validation, and the episode ended unsubmitted with reward 0.
+Both official evaluation stages remain unexecuted.
+[Design](DESIGN.md) [Second credentialed attempt evidence](evidence/books-snowflake-second.md)
 [Setup and handoff](LIVE_SETUP.md)

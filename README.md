@@ -180,11 +180,11 @@ tool trace, submitted artifacts and per-attempt sync provenance. A cleanup failu
 in `private-recovery`. Keep the entire run directory private and review cleanup
 notices before using the result.
 
-The local runtime audit validated all 15 staged inputs. The authorized live
-`books` attempt transferred the `address` stream through Airbyte and observed
-1,000 rows in Snowflake. Airbyte source discovery failed during the full load,
-so the episode ended unsubmitted with reward 0 and neither official stage ran.
-[Credentialed attempt evidence](evidence/books-snowflake.md)
+The second authorized live `books` attempt loaded all 15 streams through
+Airbyte into Snowflake, where the agent observed 84,337 rows at the pinned
+input counts. Its SQL failed validation and the episode ended unsubmitted
+with reward 0. Both official grading stages remain unexecuted.
+[Second credentialed attempt evidence](evidence/books-snowflake-second.md)
 
 Follow the [official setup and cost guide](LIVE_SETUP.md#official-snowflake-books)
 to stage the assets, start the source services, publish the Airbyte connector,

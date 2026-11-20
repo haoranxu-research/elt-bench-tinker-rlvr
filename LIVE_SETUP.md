@@ -518,10 +518,11 @@ the matching hourly windows. Keep delayed metering pending until it appears.
 The warehouse view reports usage credits, and cloud-services credits can
 differ from billed credits. [Warehouse metering](https://docs.snowflake.com/en/sql-reference/account-usage/warehouse_metering_history)
 
-The November 20 credentialed attempt transferred `address` to Snowflake and
-ended before submitting. Confirm the LocalStack objects and have both pinned
-File connector streams complete a local sync before authorizing a new attempt.
-[Credentialed attempt and recovery evidence](evidence/books-snowflake.md)
+The second November 20 credentialed attempt loaded all 15 streams into
+Snowflake. Validation of the sampled transformations blocked submission.
+The Airbyte worker override in `deploy/books-airbyte-values.yaml` limits
+each sync job to one attempt.
+[Second credentialed attempt evidence](evidence/books-snowflake-second.md)
 
 After inspecting results, stop the disposable local services. Admins can
 suspend the dedicated warehouse, revoke `CREATE DATABASE` from the dedicated

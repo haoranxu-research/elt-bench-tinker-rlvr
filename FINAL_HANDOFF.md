@@ -13,11 +13,12 @@ Compose validation, and the remaining Airbyte and Snowflake blockers. Its
 [runbook](LIVE_SETUP.md#official-snowflake-books) contains the current setup
 and cleanup commands for the credentialed rollout.
 
-The [credentialed `books` attempt](evidence/books-snowflake.md) transferred
-1,000 official `address` rows through Airbyte into Snowflake. Full source
-discovery failed and the episode ended unsubmitted with reward 0. Neither
-official stage ran. The evidence log records the connector failures, cleanup,
-and observed costs separately from the historical audit below.
+The [second credentialed `books` attempt](evidence/books-snowflake-second.md)
+synced all 15 official streams through Airbyte into Snowflake. The agent
+observed all 84,337 rows at the expected counts. Its SQL failed validation
+and the episode ended unsubmitted with reward 0. The official evaluators
+remain unexecuted. The [first attempt](evidence/books-snowflake.md) records
+the preceding discovery failures and the initial partial load.
 
 ## A. Completed implementations
 
