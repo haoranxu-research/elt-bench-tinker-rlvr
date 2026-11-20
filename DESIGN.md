@@ -44,6 +44,14 @@ ground truth remain on the host. The private Airbyte bundle binds only the
 workspace and custom definition. Routing and the namespace policy come from
 the pinned public config. Private reports retain attempted tool calls with
 their feedback and record Airbyte jobs separately for each load attempt.
+
+The `books` validator checks each of the three SQL files independently
+against its raw inputs and the CTEs visible in that query. When local checks
+fail, the transform tool returns a diagnostic per invalid file, with source
+line and column when available, before any warehouse statement runs. If
+Snowflake rejects a CTAS after local validation passes, feedback identifies
+the affected file and labels any location as part of the generated statement.
+
 Artifact, feedback, action, query and
 rollout budgets limit work. Changed-input checks can expose some answers
 that coincidentally match the original fixture.

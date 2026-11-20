@@ -412,6 +412,11 @@ SHOW WAREHOUSES LIKE 'ELT_BOOKS_WH';
 SHOW RESOURCE MONITORS LIKE 'ELT_BOOKS_MONITOR';
 ```
 
+Use the monitor's actual suspension threshold and current usage to check
+headroom for initial loading, transforms, grading replay and both evaluators.
+Verify this with an administrator before authorizing the next run. The
+service-role preflight confirms login and warehouse visibility.
+
 The role owns each transient database it creates and the `BOOKS` schema. That
 ownership supplies the database and schema rights for Airbyte's internal
 schema, stages and tables, Snowflake CTAS transformations, grading and

@@ -186,6 +186,11 @@ input counts. Its SQL failed validation and the episode ended unsubmitted
 with reward 0. Both official grading stages remain unexecuted.
 [Second credentialed attempt evidence](evidence/books-snowflake-second.md)
 
+The validator now reports the first actionable error in each invalid SQL file
+in the same tool observation. The saved 24-turn trajectory confirms delivery
+of the corrected feedback. [Failure analysis](FAILURE_ANALYSIS.md) ·
+[Fix and verification evidence](evidence/books-feedback-fix.md)
+
 Follow the [official setup and cost guide](LIVE_SETUP.md#official-snowflake-books)
 to stage the assets, start the source services, publish the Airbyte connector,
 and create the private `books/config.yaml` using `elt_rl.books_setup bind-airbyte`.
