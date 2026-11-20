@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from tinker_cookbook.renderers.base import Message, Renderer, ToolSpec
+from tinker_cookbook.rl import types
 from tinker_cookbook.rl.message_env import EnvFromMessageEnv, MessageStepResult
 from tinker_cookbook.rl.rollout_limits import RolloutLimits
 from tinker_cookbook.rl.types import Env, EnvGroupBuilder, Metrics, RLDataset
@@ -86,6 +87,26 @@ class ELTMessageEnv(AgentToolMessageEnv):
         return result
 
 
+class ELTTokenEnv(EnvFromMessageEnv):
+    """Keep token-level termination final even when no message was dispatched."""
+
+    _finished = False
+
+    async def initial_observation(self) -> tuple[types.Observation, types.StopCondition] | types.InitialObservationOverflow:
+        if self._finished:
+            raise RuntimeError("episode already ended")
+        result = await super().initial_observation()
+        self._finished = isinstance(result, types.InitialObservationOverflow)
+        return result
+
+    async def step(self, action: types.Action, *, extra: types.ActionExtra | None = None) -> types.StepResult:
+        if self._finished:
+            raise RuntimeError("episode already ended")
+        result = await super().step(action, extra=extra)
+        self._finished = result.episode_done
+        return result
+
+
 class ELTGroupBuilder(EnvGroupBuilder):
     """Create isolated members and release them after Cookbook group grading."""
 
@@ -113,7 +134,7 @@ class ELTGroupBuilder(EnvGroupBuilder):
                 trace_file = None
                 if self.evidence_dir is not None and episode.task.task_id == "books":
                     trace_file = self.evidence_dir / f"{episode.workspace.name}.tools.jsonl"
-                envs.append(EnvFromMessageEnv(
+                envs.append(ELTTokenEnv(
                     self.renderer, ELTMessageEnv(episode, self.renderer, trace_file),
                     failed_parse_reward=0.0, context_overflow_reward=0.0,
                     rollout_limits=RolloutLimits(

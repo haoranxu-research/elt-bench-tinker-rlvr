@@ -267,6 +267,15 @@ def test_snowflake_sql_accepts_join_aggregation_and_windows():
     assert "ROW_NUMBER()" in sql
 
 
+def test_books_accepts_boolean_join_and_filter_conditions():
+    sql = safe_select(
+        "SELECT c.id FROM customer c LEFT JOIN address a ON c.id = a.id AND a.active = 1 "
+        "WHERE c.enabled = 1 OR a.id IS NULL",
+        frozenset({"customer", "address"}),
+    )
+    assert " AND " in sql and " OR " in sql
+
+
 def test_books_reports_independent_sql_failures_in_one_pass():
     backend = object.__new__(official.SnowflakeBooksBackend)
     backend.raw_tables = frozenset({"publisher", "customer", "author"})

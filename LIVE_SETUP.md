@@ -417,6 +417,11 @@ headroom for initial loading, transforms, grading replay and both evaluators.
 Verify this with an administrator before authorizing the next run. The
 service-role preflight confirms login and warehouse visibility.
 
+The [host reference smoke procedure](evidence/books-evaluator-smoke.md)
+checks the evaluator independently of model behavior. After Snowflake
+authorization, it uses one fresh namespace and one Airbyte load. It
+does not require a Tinker key.
+
 The role owns each transient database it creates and the `BOOKS` schema. That
 ownership supplies the database and schema rights for Airbyte's internal
 schema, stages and tables, Snowflake CTAS transformations, grading and

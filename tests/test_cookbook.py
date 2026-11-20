@@ -15,7 +15,7 @@ pytest.importorskip("tinker_cookbook", reason="optional pinned Cookbook dependen
 import tinker
 from tinker_cookbook.renderers.base import Message, ParseTermination, Renderer, ToolCall, ToolSpec
 
-from elt_rl.contracts import EpisodeConfig
+from elt_rl.contracts import EpisodeConfig, TokenBudget
 from elt_rl.cookbook import ELTGroupBuilder
 from elt_rl.local import local_task
 
@@ -81,6 +81,58 @@ def test_cookbook_token_env_group(tmp_path):
             await builder.cleanup()
         assert not builder.episodes
         assert all(not path.exists() for path in workspaces)
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("end", ["turn_limit", "length", "initial_overflow", "submitted"])
+def test_terminal_rollout_cannot_start_grading_again(tmp_path, end):
+    from tinker_cookbook.rl.types import InitialObservationOverflow
+
+    verifier_calls = []
+    task = local_task()
+
+    def verify(backend):
+        verifier_calls.append(backend)
+        return task.verify(backend)
+
+    async def run():
+        builder = ELTGroupBuilder(
+            EpisodeConfig(tmp_path, max_turns=3), cast(Renderer, ScriptedRenderer()), 1,
+            task_factory=lambda: replace(task, verify=verify),
+            budget=TokenBudget(context=1, per_turn=1) if end == "initial_overflow" else TokenBudget(),
+        )
+        env, = await builder.make_envs()
+        episode, = builder.episodes
+        actions = [json.loads(line) for line in TRACE.read_text(encoding="utf-8").splitlines()]
+
+        def tokens(*calls):
+            return list(json.dumps(calls).encode())
+
+        try:
+            first = await env.initial_observation()
+            if end == "initial_overflow":
+                assert isinstance(first, InitialObservationOverflow)
+                terminal = first
+            else:
+                await env.step(tokens(*actions[:3]))
+                transformed = await env.step(tokens(actions[3], actions[6], actions[7]))
+                assert "transform finished" in transformed.logs["tool_result_2"]
+                if end == "length":
+                    terminal = await env.step(tokens(actions[-1]), extra={"stop_reason": "length"})
+                else:
+                    terminal = await env.step(tokens(actions[-1] if end == "submitted" else actions[8]))
+                assert terminal.episode_done
+            submitted = end == "submitted"
+            assert terminal.reward == int(submitted)
+            assert episode.grade().submitted == submitted
+            with pytest.raises(RuntimeError, match="episode already ended"):
+                await env.step(tokens(actions[-1]))
+            assert len(verifier_calls) == int(submitted)
+            assert len(list(episode.workspace.glob("submission-*"))) == int(submitted)
+        finally:
+            await builder.cleanup()
+        assert not episode.workspace.exists()
 
     asyncio.run(run())
 

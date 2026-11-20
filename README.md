@@ -183,13 +183,17 @@ notices before using the result.
 The second authorized live `books` attempt loaded all 15 streams through
 Airbyte into Snowflake, where the agent observed 84,337 rows at the pinned
 input counts. Its SQL failed validation and the episode ended unsubmitted
-with reward 0. Both official grading stages remain unexecuted.
+with reward 0. Neither official grading stage ran against the live warehouse.
 [Second credentialed attempt evidence](evidence/books-snowflake-second.md)
 
 The validator now reports the first actionable error in each invalid SQL file
 in the same tool observation. The saved 24-turn trajectory confirms delivery
 of the corrected feedback. [Failure analysis](FAILURE_ANALYSIS.md) ·
 [Fix and verification evidence](evidence/books-feedback-fix.md)
+
+A separate host reference passed both pinned evaluator stages offline.
+It used the staged `books` inputs and a local SQL transport.
+[Smoke results and one-load Snowflake procedure](evidence/books-evaluator-smoke.md)
 
 Follow the [official setup and cost guide](LIVE_SETUP.md#official-snowflake-books)
 to stage the assets, start the source services, publish the Airbyte connector,
