@@ -232,7 +232,7 @@ async def run_remote(
 ) -> int:
     train = mode == "train-one"
     budget = PILOT_BUDGET if train else TokenBudget()
-    prices = await asyncio.to_thread(fetch_model_pricing, model)
+    prices = await asyncio.to_thread(fetch_model_pricing, model, timeout=25.0)
     if prices is None:
         raise ConfigurationError("live pricing unavailable for this model")
     if any(not math.isfinite(rate) or rate < 0 for rate in asdict(prices).values()):

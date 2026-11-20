@@ -390,9 +390,9 @@ def snowflake_task(config: OfficialConfig, *, allow_paid: bool = False) -> TaskD
     if any(not (config.ground_truth / "books" / f"{name}.csv").is_file() for name in MODELS):
         raise ConfigurationError("ELT_GT_SNOWFLAKE must contain official books ground truth CSVs")
     instructions = (
-        "Official ELT-Bench Snowflake task: books. Configure load.json as "
-        '{"sources":{"postgres":["address"]}} using the source groups below. '
-        "Select every required stream for a complete load. Run the load stage. "
+        "Official ELT-Bench Snowflake task: books. Write load.json with a top-level "
+        "sources object. In sources, map each listed group to an array of all its stream names. "
+        "Stage 2 requires every stream to pass Stage 1. Run the load stage. "
         "Read the model sections, then write publishers.sql, customers.sql and authors.sql "
         "as one Snowflake SELECT each using unqualified raw table names. Ordinary SQL joins, "
         "aggregates, CTEs and window functions are allowed. The host materializes the SELECTs. "

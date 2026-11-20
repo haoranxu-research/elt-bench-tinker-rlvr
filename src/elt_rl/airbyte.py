@@ -187,8 +187,13 @@ class AirbyteRun:
                 stdout=subprocess.PIPE if command == "output" else subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL, timeout=self.timeout, check=True,
             )
-        except (OSError, subprocess.SubprocessError):
-            raise PipelineError(f"Airbyte Terraform {command} failed or timed out") from None
+        except subprocess.TimeoutExpired:
+            raise PipelineError(f"Airbyte Terraform {command} timed out") from None
+        except subprocess.CalledProcessError as error:
+            raise PipelineError(f"Airbyte Terraform {command} failed (exit {error.returncode}); "
+                                "check the private Airbyte workload logs") from None
+        except OSError:
+            raise PipelineError(f"could not launch Terraform {command}") from None
         return result.stdout
 
     def provision(self, main_tf: Path, plan: dict, username: str, password: str) -> None:

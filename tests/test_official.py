@@ -17,6 +17,23 @@ from elt_rl.episode import ELTEpisodeState
 from elt_rl.official_sql import safe_select
 
 
+@pytest.mark.parametrize(("error", "message"), [
+    (subprocess.TimeoutExpired(["private-secret-marker"], 600), "apply timed out"),
+    (subprocess.CalledProcessError(1, ["private-secret-marker"], stderr=b"private-secret-marker"),
+     r"apply failed \(exit 1\)"),
+    (OSError("private-secret-marker"), "could not launch Terraform apply"),
+])
+def test_airbyte_terraform_errors_are_actionable_without_secrets(tmp_path, monkeypatch, error, message):
+    def fail(*_args, **_kwargs):
+        raise error
+
+    monkeypatch.setattr(subprocess, "run", fail)
+    runner = AirbyteRun(tmp_path, "terraform", "http://127.0.0.1:8000/api/public/v1", 600)
+    with pytest.raises(PipelineError, match=message) as caught:
+        runner._tf("apply")
+    assert "private-secret-marker" not in str(caught.value)
+
+
 @pytest.fixture
 def checkout():
     default = Path(__file__).resolve().parents[2] / "upstream-elt-bench"
@@ -65,6 +82,7 @@ def test_official_books_public_task_and_airbyte_plan(checkout, tmp_path, monkeyp
     assert plan["resource"]["airbyte_destination_snowflake"]["books"]["configuration"]["schema"] == "BOOKS"
     with pytest.raises(PipelineError):
         select_streams('{"sources":{"postgres":["../gold"]}}', available)
+
 
 
 def test_books_staging_rejects_bad_counts_before_creating_runtime(tmp_path):
