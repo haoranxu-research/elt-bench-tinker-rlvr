@@ -156,3 +156,21 @@ public key, a dedicated service role, and a monitored X-Small Gen1 warehouse.
 Account setup and execution authorization are outstanding. Snowflake and
 Tinker were not called during this handoff, so warehouse transfer, official
 evaluation and the execution-derived reward remain unobserved.
+
+## Authorized Snowflake preflight
+
+The operator authorized one rollout with a 1-credit Snowflake warehouse
+monitor and a USD 1 Tinker sampling estimate limit. The Standard trial showed
+a positive balance. The dedicated X-Small warehouse was created initially
+suspended using `GENERATION = '1'` and 60-second auto-suspend. Snowflake rejected
+the first DDL using `RESOURCE_CONSTRAINT = STANDARD_GEN_1`. The corrected
+script registered the prepared public key and granted the service role
+warehouse usage and ownership of its own transient databases.
+
+The Snowflake and Airbyte preflight passed with RSA authentication. The
+namespace probe created and dropped a transient database and its `BOOKS`
+schema. A Kubernetes pod verified TCP access to the Snowflake endpoint and
+Google Drive. The exact five built-in connector images reported by Airbyte
+were warmed in kind. Local Terraform created and removed all six source
+configurations without a warehouse destination. The full offline test suite
+passed 60 tests with the updated service timeout.

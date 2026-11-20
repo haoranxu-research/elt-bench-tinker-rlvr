@@ -40,7 +40,8 @@ class OfficialConfig:
     airbyte_url: str
     terraform: str
     report_dir: Path
-    service_timeout: int = 120
+    # The verified local sync took 339 seconds, including queue and startup time.
+    service_timeout: int = 600
 
     @classmethod
     def from_environment(cls, report_dir: Path, settings: Mapping[str, str] = os.environ) -> "OfficialConfig":

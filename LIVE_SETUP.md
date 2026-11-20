@@ -376,7 +376,7 @@ CREATE RESOURCE MONITOR ELT_BOOKS_MONITOR WITH CREDIT_QUOTA = 1
     FREQUENCY = NEVER START_TIMESTAMP = IMMEDIATELY
     TRIGGERS ON 100 PERCENT DO SUSPEND_IMMEDIATE;
 CREATE WAREHOUSE ELT_BOOKS_WH WITH WAREHOUSE_TYPE = STANDARD
-    WAREHOUSE_SIZE = XSMALL RESOURCE_CONSTRAINT = STANDARD_GEN_1
+    WAREHOUSE_SIZE = XSMALL GENERATION = '1'
     AUTO_SUSPEND = 60 AUTO_RESUME = TRUE INITIALLY_SUSPENDED = TRUE
     RESOURCE_MONITOR = ELT_BOOKS_MONITOR;
 CREATE USER ELT_BOOKS_SERVICE TYPE = SERVICE
@@ -443,6 +443,12 @@ state with credentials.
 The run writes sampled tokens to `sampled-actions.jsonl`, tool calls and
 observations to `pipelines/*.tools.jsonl`, and per-attempt Airbyte jobs and
 grader files to `official/<run-database>/`.
+
+Warm the exact connector versions reported by the local Airbyte catalog in
+the kind node before starting the rollout. The adapter allows 600 seconds
+per Airbyte sync, Terraform operation and evaluator process. This accounts
+for the queue delay observed in the verified local sync. The rollout itself
+has a separate 30-minute limit.
 
 On the Windows host with the local Airbyte API forwarded to port `18000`, use
 the same Python runtime as the verified model pilot. Run preflight first. The
