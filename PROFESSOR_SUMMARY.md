@@ -24,9 +24,10 @@ and checkpoint metadata matched the base model and LoRA rank. This
 establishes the update on local SQLite rewards.
 
 For the official `books` task, all 15 staged inputs match the pinned Stage 1
-row counts. The pinned seed scripts populated a real local PostgreSQL instance
-and MongoDB replica set, and the pinned REST app served all three streams over
-HTTP. A credentialed official rollout remains outstanding. It requires a
-Docker-backed Airbyte workspace with the published connector and an authorized
-Snowflake service account and warehouse. [Design](DESIGN.md)
-[Executed runtime evidence](evidence/books-runtime.md) [Setup and handoff](LIVE_SETUP.md)
+row counts. In a credentialed attempt, Tinker sampled an agent trajectory and
+Airbyte wrote the official `address` stream to Snowflake. The agent observed
+1,000 rows. Discovery of the remaining sources failed on an absent LocalStack
+bucket and a Google Drive connection error. The episode ended without a
+submission and earned 0. Neither official evaluation stage ran.
+[Design](DESIGN.md) [Credentialed attempt evidence](evidence/books-snowflake.md)
+[Setup and handoff](LIVE_SETUP.md)

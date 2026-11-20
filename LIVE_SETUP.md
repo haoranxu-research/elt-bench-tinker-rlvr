@@ -123,7 +123,8 @@ The pinned shared connector uses that stream for its connection check. It is
 outside the 15 `books` streams used for the reward. Download the two flat files from
 the URLs in the pinned `books/config.yaml` to `runs/books-assets/flat-files/`
 as `address_status.jsonl` and `order_status.csv`. The connector uses the original
-URLs during a live run. Fetch the three reference CSVs from the pinned revision
+URLs during a live run. Verify both URLs from the Airbyte workload network.
+Fetch the three reference CSVs from the pinned revision
 and verify the recorded hashes. [Upstream archive IDs](https://github.com/uiuc-kang-lab/ELT-Bench/blob/3b068d5f15f64541d05fbc33a817e4b08c6bf173/setup/elt_setup.sh)
 [Reference hashes](evidence/live-readiness.md#official-snowflake-books)
 
@@ -156,6 +157,20 @@ recreate the local PostgreSQL and MongoDB `books` databases. Check each seeded
 table or collection against the count printed by `stage` and check the two
 objects in the local `books-bucket`. The PostgreSQL helper can continue past
 an individual SQL error, so a successful script exit alone is insufficient.
+
+LocalStack Community may lose its S3 objects after a restart. Before launching
+the agent, seed or refresh the two staged inputs and check the keys using the
+container's `awslocal` endpoint.
+
+```bash
+docker exec elt-localstack awslocal --region us-west-2 s3api head-bucket --bucket books-bucket ||
+  docker exec elt-localstack awslocal --region us-west-2 s3 mb s3://books-bucket
+for file in country.csv shipping_method.csv; do
+  docker cp "$runtime/setup/data/books/$file" "elt-localstack:/tmp/$file"
+  docker exec elt-localstack awslocal --region us-west-2 s3 cp "/tmp/$file" "s3://books-bucket/$file"
+done
+docker exec elt-localstack awslocal --region us-west-2 s3 ls s3://books-bucket/
+```
 
 ### 2. Start and bind Airbyte
 
@@ -387,6 +402,16 @@ GRANT USAGE ON WAREHOUSE ELT_BOOKS_WH TO ROLE ELT_BOOKS_ROLE;
 GRANT CREATE DATABASE ON ACCOUNT TO ROLE ELT_BOOKS_ROLE;
 ```
 
+Before a live run, confirm as `ACCOUNTADMIN` that the warehouse's
+`resource_monitor` column names the dedicated monitor and that the monitor's
+`credit_quota` and `remaining_credits` match the approved run. Inspect the
+raw `SHOW` results so a `SELECT` projection cannot auto-resume the warehouse.
+
+```sql
+SHOW WAREHOUSES LIKE 'ELT_BOOKS_WH';
+SHOW RESOURCE MONITORS LIKE 'ELT_BOOKS_MONITOR';
+```
+
 The role owns each transient database it creates and the `BOOKS` schema. That
 ownership supplies the database and schema rights for Airbyte's internal
 schema, stages and tables, Snowflake CTAS transformations, grading and
@@ -460,6 +485,10 @@ $booksPrivate = Join-Path $env:LOCALAPPDATA 'ELTBenchBooks'
 $env:ELT_BOOKS_INPUT_DIR = Join-Path $booksPrivate 'books'
 $env:ELT_AIRBYTE_URL = 'http://127.0.0.1:18000/api/public/v1'
 $env:ELT_SNOWFLAKE_CREDENTIAL_JSON = Join-Path $booksPrivate 'snowflake.json'
+$env:TF_CLI_CONFIG_FILE = (Resolve-Path .venv-core/tf-tools/terraform.rc).Path
+$env:CHECKPOINT_DISABLE = '1'
+$env:HF_HUB_OFFLINE = '1'
+$env:TRANSFORMERS_OFFLINE = '1'
 .\.venv-core\Scripts\python.exe -m elt_rl.preflight official --airbyte-probe --snowflake-probe
 # Run only after the approved service checks pass.
 .\.venv\Scripts\python.exe -c 'from pathlib import Path; import sys,runpy; sys.path.append(str(Path(sys.base_prefix) / ""Lib"" / ""site-packages"")); runpy.run_module(""elt_rl.run"", run_name=""__main__"")' official-rollout --allow-paid --allow-warehouse --budget-usd 1 --out runs/books-001
@@ -474,6 +503,11 @@ the matching hourly windows. Keep delayed metering pending until it appears.
 The warehouse view reports usage credits, and cloud-services credits can
 differ from billed credits. [Warehouse metering](https://docs.snowflake.com/en/sql-reference/account-usage/warehouse_metering_history)
 
+The November 20 credentialed attempt transferred `address` to Snowflake and
+ended before submitting. Confirm the LocalStack objects and have both pinned
+File connector streams complete a local sync before authorizing a new attempt.
+[Credentialed attempt and recovery evidence](evidence/books-snowflake.md)
+
 After inspecting results, stop the disposable local services. Admins can
 suspend the dedicated warehouse, revoke `CREATE DATABASE` from the dedicated
 role, and drop the dedicated service user, warehouse, monitor and role if
@@ -484,6 +518,7 @@ docker compose -p elt-docker -f "$runtime/elt-docker/docker-compose.yml" \
   -f "$PWD/deploy/books-compose.loopback.yml" down
 abctl local uninstall
 ```
+
 
 ## Warehouse cost
 

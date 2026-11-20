@@ -67,7 +67,8 @@ The local warehouse path, real Qwen text renderer and Cookbook datum path
 have offline evidence. The pinned evaluator used a synthetic warehouse
 connector in tests. The production Tinker pilot completed one LoRA optimizer
 step using local SQLite rewards, measured a post-update log-probability
-change, and verified checkpoint metadata. The official Snowflake rollout and
-publication remain pending. The 15 official inputs matched Stage 1 counts,
-and local PostgreSQL, MongoDB, and REST checks exercised 11 of those streams.
-[Pilot evidence](evidence/tinker-pilot.md) [Books runtime evidence](evidence/books-runtime.md)
+change, and verified checkpoint metadata. The live `books` attempt copied one
+official stream through Airbyte into Snowflake. Source discovery blocked the
+full load. The episode ended unsubmitted with reward 0, leaving both official
+grading stages unexecuted.
+[Pilot evidence](evidence/tinker-pilot.md) [Credentialed attempt evidence](evidence/books-snowflake.md)

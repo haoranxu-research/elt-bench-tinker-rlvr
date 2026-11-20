@@ -13,6 +13,12 @@ Compose validation, and the remaining Airbyte and Snowflake blockers. Its
 [runbook](LIVE_SETUP.md#official-snowflake-books) contains the current setup
 and cleanup commands for the credentialed rollout.
 
+The [credentialed `books` attempt](evidence/books-snowflake.md) transferred
+1,000 official `address` rows through Airbyte into Snowflake. Full source
+discovery failed and the episode ended unsubmitted with reward 0. Neither
+official stage ran. The evidence log records the connector failures, cleanup,
+and observed costs separately from the historical audit below.
+
 ## A. Completed implementations
 
 | Area | Implementation and audit findings |

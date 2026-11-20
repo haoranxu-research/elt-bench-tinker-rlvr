@@ -174,3 +174,8 @@ Google Drive. The exact five built-in connector images reported by Airbyte
 were warmed in kind. Local Terraform created and removed all six source
 configurations without a warehouse destination. The full offline test suite
 passed 60 tests with the updated service timeout.
+
+The subsequent [credentialed attempt](books-snowflake.md) wrote one official
+stream to Snowflake. The full load failed in source discovery and the episode
+ended unsubmitted. A local follow-up synchronized both original Drive files
+and the reseeded S3 bucket through the pinned Airbyte connectors.
