@@ -127,3 +127,32 @@ detail is in the project's private configuration directory.
 This sync exercised the official source connector against local PostgreSQL.
 The separate scored Snowflake rollout remains unexecuted. No paid operation
 was performed.
+
+## Credentialed rollout handoff
+
+Starting from `ff5e2a9`, the Airbyte health endpoint returned
+`{"available":true}` again, and all ten long-running Airbyte pods reported
+`1/1 Running`. The saved job `1` and its recorded SQL count were checked
+again. The successful attempt recorded 27 emitted and 27 committed rows,
+and SQL observed 27 rows.
+
+With `ELT_BOOKS_INPUT_DIR` set to the private books configuration and
+`ELT_AIRBYTE_URL` set to the loopback Airbyte public API, the following
+preflight passed the local asset, input, dependency and Airbyte checks:
+
+```powershell
+.\.venv-core\Scripts\python.exe -m elt_rl.preflight official --airbyte-probe
+```
+
+The command exited 2 because Snowflake credentials are missing. The private
+Snowflake JSON has blank account and host fields. No Snowflake credential
+file is selected by the project and no default Snowflake CLI profile was
+found. The prepared PKCS#8 RSA key decrypted locally with its configured
+passphrase and matched the public key. Its size is 2048 bits.
+
+The [trial and provisioning steps](../LIVE_SETUP.md#3-configure-snowflake-after-authorization)
+cover account setup without payment details, registration of the existing
+public key, a dedicated service role, and a monitored X-Small Gen1 warehouse.
+Account setup and execution authorization are outstanding. Snowflake and
+Tinker were not called during this handoff, so warehouse transfer, official
+evaluation and the execution-derived reward remain unobserved.

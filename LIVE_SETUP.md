@@ -40,7 +40,8 @@ automatically on a timeout.
 Use the pinned ELT-Bench checkout and public source files. The Windows checkout
 already has all 15 source inputs and three reference CSVs in ignored
 `runs/books-assets/`. The host passed a real loopback HTTP test for the three
-REST streams. Airbyte and Snowflake remain pending. [Runtime evidence](evidence/books-runtime.md)
+REST streams. Airbyte has completed a real local PostgreSQL sync. The scored
+Snowflake rollout awaits authorized account access. [Runtime evidence](evidence/books-docker-runtime.md)
 
 ### 1. Prepare and verify the local sources
 
@@ -313,14 +314,23 @@ credentialed rollout. [Postgres destination](https://docs.airbyte.com/integratio
 
 ### 3. Configure Snowflake after authorization
 
-Use an existing authorized lab account if available. Otherwise, sign up at
-the Snowflake trial page, verify the email address, select an organization,
-cloud and region allowed by the lab, and confirm that Snowsight reports an
-active trial with credit available. Leave payment details unset. Share the
-account identifier and Snowflake hostname through the private configuration
-file. Wait for explicit approval before creating the warehouse, using trial
-credits or running a job. [Trial signup](https://www.snowflake.com/en/snowflake-trial/)
+Use an existing authorized lab account if available. To create a trial:
+
+1. Open the Snowflake trial page and select **Start Here** under **The AI Data Cloud**.
+2. Submit a valid email address and complete the signup and email verification steps.
+   Choose **Standard** and a cloud and region permitted by the lab when prompted.
+   Use the Snowflake trial offer and leave payment details unset.
+3. Sign in to Snowsight as the trial administrator. Verify that the account is
+   on trial terms and that the free usage balance is positive. Copy the account
+   identifier and account URL from the account details. Use the identifier as
+   `account` and the hostname portion of the URL as `host` in the private JSON.
+4. Once setup and trial credit use are authorized, run the administrator SQL
+   below with the prepared public key. Confirm the approved warehouse credit
+   quota and the separate Tinker sampling budget before starting the rollout.
+
+[Trial signup](https://www.snowflake.com/en/snowflake-trial/)
 [Trial terms](https://docs.snowflake.com/en/user-guide/admin-trial-account)
+[Account identifiers](https://docs.snowflake.com/en/user-guide/admin-account-identifier)
 
 On the host where the
 rollout runs, create an encrypted RSA PKCS#8 key in the private directory.
@@ -433,6 +443,30 @@ state with credentials.
 The run writes sampled tokens to `sampled-actions.jsonl`, tool calls and
 observations to `pipelines/*.tools.jsonl`, and per-attempt Airbyte jobs and
 grader files to `official/<run-database>/`.
+
+On the Windows host with the local Airbyte API forwarded to port `18000`, use
+the same Python runtime as the verified model pilot. Run preflight first. The
+rollout command requires explicit approval for both services and a new output
+directory. The example uses USD 1 as its Tinker estimate limit.
+
+```powershell
+$booksPrivate = Join-Path $env:LOCALAPPDATA 'ELTBenchBooks'
+$env:ELT_BOOKS_INPUT_DIR = Join-Path $booksPrivate 'books'
+$env:ELT_AIRBYTE_URL = 'http://127.0.0.1:18000/api/public/v1'
+$env:ELT_SNOWFLAKE_CREDENTIAL_JSON = Join-Path $booksPrivate 'snowflake.json'
+.\.venv-core\Scripts\python.exe -m elt_rl.preflight official --airbyte-probe --snowflake-probe
+# Run only after the approved service checks pass.
+.\.venv\Scripts\python.exe -c 'from pathlib import Path; import sys,runpy; sys.path.append(str(Path(sys.base_prefix) / ""Lib"" / ""site-packages"")); runpy.run_module(""elt_rl.run"", run_name=""__main__"")' official-rollout --allow-paid --allow-warehouse --budget-usd 1 --out runs/books-001
+```
+
+Record the rollout's UTC start and end times and preserve the run manifest's
+actual sampling token counts and published-rate cost estimate. Reconcile
+against the Tinker billing entry when available. For Snowflake, an authorized
+administrator can record `CREDITS_USED_COMPUTE` and `CREDITS_USED_CLOUD_SERVICES`
+from `SNOWFLAKE.ACCOUNT_USAGE.WAREHOUSE_METERING_HISTORY` for `ELT_BOOKS_WH` and
+the matching hourly windows. Keep delayed metering pending until it appears.
+The warehouse view reports usage credits, and cloud-services credits can
+differ from billed credits. [Warehouse metering](https://docs.snowflake.com/en/sql-reference/account-usage/warehouse_metering_history)
 
 After inspecting results, stop the disposable local services. Admins can
 suspend the dedicated warehouse, revoke `CREATE DATABASE` from the dedicated
