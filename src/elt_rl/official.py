@@ -200,11 +200,13 @@ class SnowflakeBooksBackend:
                 elif re.search(r"(?:Date|Timestamp) '[^'\r\n]+' is not recognized", error.msg, re.IGNORECASE):
                     detail = ": a date or timestamp conversion failed. Check the input format."
             if state.startswith("42") and isinstance(error.msg, str):
-                identifier = re.search(r"(invalid identifier|unexpected) '[A-Z0-9_.$]{1,80}'",
+                identifier = re.search(r"(invalid identifier|unexpected|ambiguous column name) '[A-Z0-9_.$]{1,80}'",
                                        error.msg, re.IGNORECASE)
                 location = re.search(r"\bline [0-9]{1,6} at position [0-9]{1,6}\b", error.msg, re.IGNORECASE)
                 if identifier:
                     detail += f": {identifier[0]}"
+                    if identifier[1].lower() == "ambiguous column name":
+                        detail += ". Qualify the column with its source alias."
                 if location:
                     detail += f" ({'generated statement, ' if artifact else ''}{location[0]})"
             prefix = f"{artifact}: " if artifact else ""
@@ -304,27 +306,36 @@ class SnowflakeBooksBackend:
 
     def lookup_values(self, table: str, column: str, contains: str) -> list:
         lookup_columns = {
+            "book": {"publication_date"},
             "book_language": {"language_id", "language_code", "language_name"},
             "shipping_method": {"method_id", "method_name"},
             "country": {"country_id", "country_name"},
         }
         if column not in lookup_columns.get(table, ()):
-            raise PipelineError("use a column from book_language, shipping_method, or country")
+            raise PipelineError("use book.publication_date or a lookup column from book_language, shipping_method, or country")
         if contains and not re.fullmatch(r"[a-zA-Z0-9 .'-]{1,48}", contains):
             raise PipelineError("use up to 48 letters, digits, spaces, or simple punctuation in contains")
         literal = contains.lower().replace("'", "''")
         predicate = f"WHERE LOWER(CAST({column} AS VARCHAR)) LIKE '%{literal}%'" if literal else ""
-        query = f"SELECT DISTINCT {column} FROM {self.database}.BOOKS.{table} {predicate} ORDER BY 1 LIMIT 30"
+        projection = "CAST(publication_date AS VARCHAR)" if table == "book" else column
+        query = f"SELECT DISTINCT {projection} FROM {self.database}.BOOKS.{table} {predicate} ORDER BY 1 LIMIT 30"
         return [row[0] for row in self._lookup_rows(query)]
 
     def _lookup_rows(self, query: str):
         return self._run_sql([query])
 
     def source_labels(self, materialized: dict[str, list[str]]) -> dict:
-        fields = {"book_language": ("language_code", "language_name"), "shipping_method": ("method_name",)}
-        return {table: self._lookup_rows(
+        observed = {}
+        if "publication_date" in materialized.get("book", ()):
+            observed["book.publication_date"] = [value for value, in self._lookup_rows(
+                f"SELECT DISTINCT CAST(publication_date AS VARCHAR) FROM {self.database}.BOOKS.book "
+                "WHERE publication_date IS NOT NULL ORDER BY 1 LIMIT 3"
+            )]
+        fields = {"shipping_method": ("method_name",), "book_language": ("language_code", "language_name")}
+        observed.update({table: self._lookup_rows(
             f"SELECT DISTINCT {', '.join(columns)} FROM {self.database}.BOOKS.{table} ORDER BY 1 LIMIT 30"
-        ) for table, columns in fields.items() if set(columns) <= set(materialized.get(table, ()))}
+        ) for table, columns in fields.items() if set(columns) <= set(materialized.get(table, ()))})
+        return observed
 
     def output_shape(self, model: str, expected: tuple[str, ...]) -> str | None:
         catalog = self.columns()
@@ -439,6 +450,23 @@ class SnowflakeBooksBackend:
             return (f"{failures} proposed most-expensive books have no priced sale or are beaten by a higher sale "
                     "for that author. Check the title ranking against observed sale prices. "
                     "An average sale price can change the ranking.")
+        return None
+
+    def author_publication_check(self, sources: dict[str, list[str]]) -> str | None:
+        if not ({"book_id", "publication_date"} <= set(sources.get("book", ()))
+                and {"author_id", "book_id"} <= set(sources.get("book_author", ()))):
+            return None
+        schema = f"{self.database}.BOOKS."
+        (failures,), = self._lookup_rows(
+            f"SELECT COUNT(*) FROM {schema}authors a "
+            "WHERE COALESCE(TRY_CAST(CAST(a.per_book_published_1992 AS VARCHAR) AS DOUBLE), 0) <= 0 "
+            f"AND EXISTS (SELECT 1 FROM {schema}book_author ba JOIN {schema}book b ON ba.book_id = b.book_id "
+            "WHERE ba.author_id = a.author_id "
+            "AND EXTRACT(YEAR FROM TRY_CAST(CAST(b.publication_date AS VARCHAR) AS DATE)) = 1992)"
+        )
+        if failures:
+            return (f"{failures} authors with a book published in 1992 have a zero or missing 1992 rate. "
+                    "Check the observed date format and the year filter.")
         return None
 
     def _clear(self) -> None:

@@ -54,8 +54,9 @@ BOOKS_TOOLS = {
     **TOOLS,
     "inspect_warehouse": ToolSpec("Show actual materialized tables and columns. Pass table for one table.",
                                    optional=("table",)),
-    "inspect_values": ToolSpec("Read distinct values from a source lookup column. Supported tables: "
-                               "book_language, shipping_method, country. Optionally filter by substring.",
+    "inspect_values": ToolSpec("Read distinct source values. Use book.publication_date to check the date format, "
+                               "or a lookup column from book_language, shipping_method, or country. "
+                               "Optionally filter by substring.",
                                ("table", "column"), ("contains",)),
     "read_pipeline_file": ToolSpec("Read saved SQL. Use the next offset from the response for a long file.",
                                    ("path",), ("offset",)),
@@ -80,7 +81,8 @@ BOOKS_INSTRUCTION = (
     "Use tools to complete the ELT task. Start with read_task. Save load.json with write_pipeline_file, "
     "wait for a successful save receipt, then execute_pipeline with stage=load. "
     "Use bare filenames. Inspect actual warehouse columns and read the relevant model and relationship sections before writing SQL. "
-    "Start with one short independent transformation and get it tested. Check each join key against the schema. "
+    "Start with one short independent transformation and get it tested. Check each join key against the schema "
+    "and qualify any column shared by several joined inputs. "
     "Inspect source values before filtering coded labels. Keep undefined rates NULL unless the task says to fill them. "
     "Apply a zero default only to the measures that explicitly request one, and check that entities without "
     "related source rows keep their required output row. "
@@ -94,8 +96,9 @@ BOOKS_INSTRUCTION = (
     "For each model, use write_pipeline_file(path, content) to save the full SQL query, then test just "
     "that file with execute_pipeline(stage=transform, file=filename). Rewrite the named file when it fails. "
     "Only write_pipeline_file accepts SQL text. Follow the remaining budget and tested files in tool feedback. "
-    "Get at least one execution result for every required model before spending multiple turns reviewing "
-    "already tested SQL. Do not revise a saved draft again until you have tested it. You can call "
+    "Get at least one execution result for every required model before rereading or reviewing "
+    "already tested SQL. Keep tested files unless a public check identifies a problem. Do not revise a saved "
+    "draft again until you have tested it. You can call "
     "write_pipeline_file and then execute_pipeline for that file in the same turn. "
     "Review the public requirements and "
     "check the required metrics and review any SQL feedback before submitting. Submit on a later turn after testing. "
@@ -234,7 +237,7 @@ class ELTEpisodeState:
         if self._loaded and self._unattempted_files and min(turns, calls) >= 2 and attempts != 0:
             queued = next(name for name in self.task.transform_artifacts if name in self._unattempted_files)
             status += f" Test saved {queued} next using execute_pipeline."
-        elif self._tested_files and (turns <= 3 or calls <= 3 or attempts == 0):
+        elif self._tested_files and (turns <= 1 or calls <= 1 or attempts == 0):
             arguments = "{}" if len(self._tested_files) == len(self.task.transform_artifacts) else '{"mode":"partial"}'
             status += f" Use the next turn to call submit_pipeline with {arguments}."
         return status
@@ -364,7 +367,8 @@ class ELTEpisodeState:
 
     def _catalog_table(self, name: str, columns: list[str]) -> str:
         types = getattr(self.backend, "temporal_columns", {})
-        fields = [f"{column} {types[name, column]}" if (name, column) in types else column for column in columns]
+        fields = [f"{column} {types[name, column]}" if (name, column) in types else column for column in columns
+                  if not column.startswith(("_airbyte_", "_ab_source_file_"))]
         return f"{name}({', '.join(fields)})"
 
     def _inspect_values(self, table: str, column: str, contains: str = "") -> str:
@@ -490,9 +494,9 @@ class ELTEpisodeState:
             self._loaded = True
             if self.task.load_streams and hasattr(self.backend, "columns"):
                 self.warehouse_columns = self.backend.columns()
-                if hasattr(self.backend, "source_labels") and {"book_language", "shipping_method"} & self.warehouse_columns.keys():
+                if hasattr(self.backend, "source_labels"):
                     labels = self.backend.source_labels(self.warehouse_columns)
-                    self.source_labels = "Observed source labels (book_language pairs are code, name): " + json.dumps(labels)
+                    self.source_labels = "Observed source values (book_language pairs are code, name): " + json.dumps(labels)
                 return result + "\nActual columns:\n" + self.catalog_text() + "\n" + self.source_labels
             return result
         if stage == "transform":
@@ -532,6 +536,10 @@ class ELTEpisodeState:
                         if filename == "authors.sql" and hasattr(self.backend, "author_title_check"):
                             title_problem = self.backend.author_title_check(self.warehouse_columns)
                             problem = " ".join(note for note in (problem, title_problem) if note) or None
+                        if (filename == "authors.sql" and hasattr(self.backend, "author_publication_check")
+                                and "per_book_published_1992" in self.task.sections.get("authors", "")):
+                            date_problem = self.backend.author_publication_check(self.warehouse_columns)
+                            problem = " ".join(note for note in (problem, date_problem) if note) or None
                         if (filename == "customers.sql" and hasattr(self.backend, "customer_rate_check")
                                 and "shipped internationally" in self.task.sections.get("customers", "").lower()):
                             problem = self.backend.customer_rate_check(self.warehouse_columns)

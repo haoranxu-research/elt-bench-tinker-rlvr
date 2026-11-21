@@ -410,11 +410,15 @@ def test_lookup_values_are_scoped_and_escape_the_filter():
     assert backend.lookup_values("book_language", "language_name", "x' OR") == ["observed"]
     assert "ELT_SESSION.BOOKS.book_language" in queries[0]
     assert "'%x'' or%'" in queries[0] and queries[0].endswith("LIMIT 30")
-    with pytest.raises(PipelineError, match="use a column"):
+    assert backend.lookup_values("book", "publication_date", "1992") == ["observed"]
+    assert "CAST(publication_date AS VARCHAR) FROM ELT_SESSION.BOOKS.book" in queries[1]
+    with pytest.raises(PipelineError, match="lookup column"):
         backend.lookup_values("customer", "email", "")
+    with pytest.raises(PipelineError, match="lookup column"):
+        backend.lookup_values("book", "title", "")
     with pytest.raises(PipelineError, match="use up to"):
         backend.lookup_values("country", "country_name", "%;")
-    assert len(queries) == 1
+    assert len(queries) == 2
 
 
 def test_public_review_flags_undefined_rate_defaults_but_preserves_zero_numerator():
@@ -544,6 +548,23 @@ def test_public_author_page_check_uses_source_relationships_and_candidate_flag()
         db.execute("UPDATE books.book SET num_pages = 0")
         db.execute("UPDATE books.authors SET wrote_fewer_total_pages_than_the_average = 0")
         assert backend.author_page_check(sources) is None
+
+
+def test_author_rate_detects_bad_text_date_parsing():
+    duckdb = pytest.importorskip("duckdb")
+    backend = official.SnowflakeBooksBackend.__new__(official.SnowflakeBooksBackend)
+    backend.database = "memory"
+    with duckdb.connect() as db:
+        db.execute("CREATE SCHEMA books")
+        db.execute("CREATE TABLE books.book AS SELECT 1 AS book_id, '1992-06-01' AS publication_date")
+        db.execute("CREATE TABLE books.book_author AS SELECT 10 AS author_id, 1 AS book_id")
+        db.execute("CREATE TABLE books.authors AS SELECT * FROM (VALUES (10, 0), (20, NULL)) "
+                   "v(author_id, per_book_published_1992)")
+        backend._lookup_rows = lambda query: db.execute(query).fetchall()
+        sources = {"book": ["book_id", "publication_date"], "book_author": ["author_id", "book_id"]}
+        assert "1 authors with a book published in 1992" in backend.author_publication_check(sources)
+        db.execute("UPDATE books.authors SET per_book_published_1992 = 100 WHERE author_id = 10")
+        assert backend.author_publication_check(sources) is None
 
 
 def test_public_customer_rate_check_uses_observed_shipping_and_percentage_range():
@@ -752,9 +773,21 @@ def test_books_quoted_cte_name_keeps_snowflake_case_sensitivity():
         safe_select('WITH "authors" AS (SELECT * FROM author) SELECT * FROM AUTHORS', frozenset({"author"}))
 
 
+@pytest.mark.parametrize("conversion", [
+    "TRY_TO_DATE(b.publication_date)", "TO_DATE(b.publication_date)",
+    "TRY_TO_DATE(b.publication_date, 'YYYY-MM-DD')",
+])
+def test_snowflake_validator_allows_native_text_date_conversion(conversion):
+    sql = f"SELECT b.title FROM book b ORDER BY {conversion} ASC, b.title ASC"
+    validated = safe_select(sql, frozenset({"book"}))
+    assert conversion.upper() in validated.upper()
+
+
 @pytest.mark.parametrize(("state", "native_message", "detail"), [
     ("42000", "line 1 at position 90 invalid identifier 'CA.COUNTRY_ID' private-credential-marker",
      "invalid identifier 'CA.COUNTRY_ID' (generated statement, line 1 at position 90)"),
+    ("42000", "ambiguous column name 'AUTHOR_ID' private-credential-marker",
+     "ambiguous column name 'AUTHOR_ID'. Qualify the column with its source alias."),
     ("22000", "Function EXTRACT does not support VARCHAR(16777216) argument type private-credential-marker",
      "a date-part function received text. Check the actual column type and parse the date first. "
      "Use TRY_TO_DATE with the observed format when the input can be invalid."),
@@ -1031,11 +1064,14 @@ def test_official_episode_calls_two_isolated_warehouse_replays(checkout, tmp_pat
         def fetchall(self):
             if ".INFORMATION_SCHEMA.COLUMNS " in statements[-1]:
                 return [("AUTHOR", "AUTHOR_ID", "NUMBER"), ("AUTHOR", "AUTHOR_NAME", "TEXT"),
+                        ("BOOK", "_AIRBYTE_EXTRACTED_AT", "TIMESTAMP_TZ"),
                         ("BOOK", "PUBLICATION_DATE", "TEXT"), ("PRIVATE_TABLE", "SECRET", "TIMESTAMP_NTZ"),
                         *((filename.removesuffix(".sql").upper(), col.upper(), "TEXT")
                           for filename, cols in task.output_columns.items() for col in cols)]
             if statements[-1].startswith("SELECT COUNT(*), COUNT(DISTINCT"):
                 return [(7, 7, 7, 0)]
+            if statements[-1].startswith("SELECT DISTINCT CAST(publication_date AS VARCHAR)"):
+                return [("1992-01-02",), ("1996-09-01",)]
             return [("AUTHOR", 7)]
 
     def provision(run, main_tf, plan, username, password):
@@ -1059,7 +1095,9 @@ def test_official_episode_calls_two_isolated_warehouse_replays(checkout, tmp_pat
         loaded = call("execute_pipeline", 4, stage="load").text
         assert "author=7" in loaded and "author(author_id, author_name)" in loaded
         assert "book(publication_date TEXT)" in loaded
+        assert "_airbyte_extracted_at" not in loaded
         assert "book.publication_date TEXT. Parse text dates before date-part functions." in loaded
+        assert '"book.publication_date": ["1992-01-02", "1996-09-01"]' in loaded
         assert "book.publication_date TEXT" in episode.compact_state(turn=6)
         assert "Still need successful tests: publishers.sql, customers.sql, authors.sql." in loaded
         assert "SECRET" not in loaded

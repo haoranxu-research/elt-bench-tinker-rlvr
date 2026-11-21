@@ -152,7 +152,9 @@ def safe_select(sql: str, raw_tables: frozenset[str]) -> str:
             # SQLGlot represents these SQL operators and predicates as functions, too.
             if isinstance(node, exp.Func) and not isinstance(node, (exp.And, exp.Or, exp.Exists)):
                 name = node.name.upper() if isinstance(node, exp.Anonymous) else node.sql_name()
-                if name not in FUNCTIONS:
+                # SQLGlot normalizes TO_DATE and TRY_TO_DATE to a typed
+                # conversion node and emits the corresponding built-in.
+                if name not in FUNCTIONS and not isinstance(node, exp.TsOrDsToDate):
                     raise _sql_error(f"function {_identifier_label(name)} is outside the allowlist",
                                      node.meta.get("line"))
             if isinstance(node, exp.Table):

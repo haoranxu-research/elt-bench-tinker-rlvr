@@ -27,6 +27,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="Separate host grading limit after timely Books submission (opt-in)")
     parser.add_argument("--books-35b-profile", action="store_true",
                         help="Use the context, turn, and tool limits of the full-score local Books rehearsal")
+    parser.add_argument("--books-max-turns", type=int, choices=range(32, 41), metavar="32..40",
+                        help="Override the 35B profile's turn cap and scale its tool-call cap within the token budget")
     parser.add_argument("--budget-usd", type=float, required=True, help="Maximum estimated Tinker token cost")
     parser.add_argument("--out", type=Path, required=True, help="New private directory for run evidence")
     parser.add_argument("--env-file", type=Path, default=Path(".env"))
@@ -42,6 +44,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--rollout-seconds is only for official-rollout and must be between 1 and 3600")
     if args.grading_seconds is not None and (not official or not 1 <= args.grading_seconds <= 3600):
         parser.error("--grading-seconds is only for official-rollout and must be between 1 and 3600")
+    if args.books_max_turns is not None and not args.books_35b_profile:
+        parser.error("--books-max-turns requires --books-35b-profile")
     if not math.isfinite(args.budget_usd) or args.budget_usd <= 0:
         parser.error("--budget-usd must be finite and positive")
     try:
@@ -85,9 +89,10 @@ def main(argv: list[str] | None = None) -> int:
             task = local_task()
         from .training import run_remote
         with TemporaryDirectory(prefix="elt-run-", dir=out) as work_root:
+            books_turns = args.books_max_turns or 32
             config = EpisodeConfig(
-                Path(work_root), max_turns=32 if args.books_35b_profile else (24 if official else PILOT_TURNS),
-                max_tool_calls=48 if args.books_35b_profile else 32,
+                Path(work_root), max_turns=books_turns if args.books_35b_profile else (24 if official else PILOT_TURNS),
+                max_tool_calls=3 * books_turns // 2 if args.books_35b_profile else 32,
                 execution_seconds=60 if official else 1,
                 rollout_seconds=(args.rollout_seconds or 3600) if official else 120,
                 max_submissions=1 if official else 2,
