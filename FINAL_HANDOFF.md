@@ -5,7 +5,7 @@
 | Requirement | Executed evidence | Status |
 | --- | --- | --- |
 | Credential-free, multi-turn ELT | The SQLite trace repaired a failed transform, submitted from a later turn, and earned 1.0 on a fresh replay. The test suite covers faulty input, failed transforms, partial and unsubmitted scores, and cleanup. | Complete |
-| Hosted agent submission with pinned books grading | Qwen3.6-35B-A3B independently authored, ran, and submitted all three outputs on DuckDB. Publishers and customers matched exactly. Stage 1 = 1.0, Stage 2 = 2/3, reward = 0.7833333. | Two author metrics and full correctness pending |
+| Hosted agent submission with pinned books grading | Qwen3.6-35B-A3B independently wrote, executed, and submitted all three outputs on DuckDB. All 15 tables and 84,337 rows were present. Stage 1 = 1.0, Stage 2 = 1.0, reward = 1.0. | Local target complete |
 | Credentialed official task | The November 21 Qwen rollout loaded all 84,337 expected rows into Snowflake. It ended unsubmitted after 24 turns with reward 0. Neither evaluator ran against Snowflake. | Live load verified. Scored agent submission pending. |
 | Real Tinker RL update | A previous pilot completed one optimizer step from execution-derived SQLite rewards and verified a changed probe and matching checkpoint metadata. | Complete |
 | Submission materials | The repository records the current results and reproduction commands. | Final baseline handoff pending |
@@ -75,20 +75,19 @@ tokens, and 8,192 sampled tokens. Measured usage implies **USD
 
 ## Final live command
 
-This command records the previously prepared profile. Launch is gated on a
-model-driven local score of 1.0 at both stages, a matching live configuration,
-fresh warehouse checks, and separate authorization.
+The local score requirement passed in `stronger-13`. The command below
+matches that run's model, renderer, and limits. The official rollout still
+requires separate authorization for Snowflake and Tinker.
 
 The authoritative model entry point is `elt_rl.run official-rollout`.
-The pending candidate is the base `Qwen/Qwen3.5-9B` with its pinned
-no-thinking renderer. The runner writes exact prompt token IDs and
-sampled actions to an ignored run directory. It permits one group member,
-24 turns, 32 tool calls, one explicit grading replay, and a 40-minute
-rollout timeout. Model-authored submissions reached both graders on DuckDB.
-The latest correctness results are in the hosted run table above. Snowflake
-credentials, warehouse metadata, direct grants, and
-the launch budget passed read-only checks. The cloud run awaits separate
-authorization for Snowflake and Tinker.
+The candidate is `Qwen/Qwen3.6-35B-A3B` with its pinned no-thinking
+renderer. The runner records prompt and action token IDs in an ignored
+run directory. It permits one agent, 32 turns, 48 tool calls, ten
+transform attempts, one grading replay and a 40-minute rollout timeout.
+The Tinker profile uses 12,288 context tokens, 12,288 total sampled tokens,
+and at most 2,048 sampled tokens per turn. Snowflake authentication,
+warehouse visibility, grants, and monitor attachment passed read-only
+checks.
 [Official setup](LIVE_SETUP.md#official-snowflake-books)
 
 ```powershell
@@ -104,12 +103,13 @@ $env:CHECKPOINT_DISABLE = '1'
 $env:HF_HOME = (Resolve-Path runs/books-offline-model/hf).Path
 $env:HF_HUB_OFFLINE = '1'
 $env:TRANSFORMERS_OFFLINE = '1'
-.\.venv\Scripts\python.exe -c 'from pathlib import Path; import sys; sys.path.append(str(Path(sys.base_prefix)/""Lib""/""site-packages"")); from elt_rl.run import main; raise SystemExit(main())' official-rollout --allow-paid --allow-warehouse --rollout-seconds 2400 --budget-usd 0.15 --model Qwen/Qwen3.5-9B --renderer qwen3_5_disable_thinking --out runs/books-official-qwen9b-001 2>&1 | ForEach-Object ToString | Tee-Object runs/books-official-qwen9b-001-console.txt
+./.venv/Scripts/python.exe -c 'from pathlib import Path; import sys; sys.path.append(str(Path(sys.base_prefix)/""Lib""/""site-packages"")); from elt_rl.run import main; raise SystemExit(main())' official-rollout --books-35b-profile --allow-paid --allow-warehouse --rollout-seconds 2400 --budget-usd 0.20 --model Qwen/Qwen3.6-35B-A3B --renderer qwen3_5_disable_thinking --out runs/books-official-qwen35b-001 2>&1 | ForEach-Object ToString | Tee-Object runs/books-official-qwen35b-001-console.txt
 ```
 
 The runner checks current rates before creating a Tinker session. The
-uncached worst-case token bound for Qwen3.5-9B at checked public rates is
-**USD 0.124575744**. Previous Snowflake runs used approximately 0.25–0.32
+uncached token bound for this Qwen3.6-35B profile is **USD 0.19335168**.
+The full-score local run used an estimated USD 0.03314277. Previous
+Snowflake runs used approximately 0.25–0.32
 credits to load and execute without grading. Two comparable passes give
 **0.50–0.64 credits** as a planning range before headroom for grading and
 cleanup. A continuously active standard Gen1 X-Small warehouse uses

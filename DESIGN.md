@@ -103,3 +103,10 @@ attempt observed all 15 expected source tables in Snowflake. The model
 used only whole-batch transforms, exhausted its transform attempts and
 finished unsubmitted with reward 0. Both live evaluator stages remain pending.
 [Pilot evidence](evidence/tinker-pilot.md) [Latest credentialed evidence](evidence/books-snowflake-final.md)
+
+For `books`, candidate checks inspect source keys, shipping labels, defined
+rates, and whether a proposed title is dominated by another observed sale.
+An unsuccessful check provides a repair opportunity within the episode.
+The pinned graders still compute the final score. The Qwen3.6-35B-A3B
+agent used the workflow to submit three exact outputs with both stages
+and reward at 1.0 on DuckDB. [Model-driven evidence](evidence/books-full-baseline.md)

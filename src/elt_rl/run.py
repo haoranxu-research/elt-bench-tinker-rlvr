@@ -7,10 +7,11 @@ import math
 import os
 import sys
 from datetime import datetime, timezone
+from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from .contracts import PILOT_TURNS, EpisodeConfig
+from .contracts import PILOT_TURNS, EpisodeConfig, TokenBudget
 from .local import local_task
 from .settings import DEFAULT_MODEL, DEFAULT_RENDERER, ConfigurationError, check_model_id, read_settings
 
@@ -22,6 +23,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--allow-warehouse", action="store_true", help="Confirm authorized Snowflake and Airbyte usage")
     parser.add_argument("--preflight-only", action="store_true", help="Check configuration and Tinker metadata without a session")
     parser.add_argument("--rollout-seconds", type=int, help="Official rollout wall-clock limit, up to 3600 seconds")
+    parser.add_argument("--books-35b-profile", action="store_true",
+                        help="Use the context, turn, and tool limits of the full-score local Books rehearsal")
     parser.add_argument("--budget-usd", type=float, required=True, help="Maximum estimated Tinker token cost")
     parser.add_argument("--out", type=Path, required=True, help="New private directory for run evidence")
     parser.add_argument("--env-file", type=Path, default=Path(".env"))
@@ -44,6 +47,9 @@ def main(argv: list[str] | None = None) -> int:
     if not settings["TINKER_API_KEY"]:
         parser.error("set TINKER_API_KEY in the environment or local .env")
     model = args.model or settings["TINKER_MODEL"] or DEFAULT_MODEL
+    if args.books_35b_profile and (not official or model != "Qwen/Qwen3.6-35B-A3B"
+                                  or args.renderer != "qwen3_5_disable_thinking"):
+        parser.error("--books-35b-profile requires official-rollout, Qwen/Qwen3.6-35B-A3B and qwen3_5_disable_thinking")
     try:
         check_model_id(model)
     except ConfigurationError as exc:
@@ -66,14 +72,18 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if official:
             from .official import BENCH_SHA, OfficialConfig, snowflake_task
-            task = snowflake_task(OfficialConfig.from_environment(out / "official", settings), allow_paid=True)
+            official_config = OfficialConfig.from_environment(out / "official", settings)
+            if args.books_35b_profile:
+                official_config = replace(official_config, transform_attempt_limit=10)
+            task = snowflake_task(official_config, allow_paid=True)
             record(benchmark_sha=BENCH_SHA)
         else:
             task = local_task()
         from .training import run_remote
         with TemporaryDirectory(prefix="elt-run-", dir=out) as work_root:
             config = EpisodeConfig(
-                Path(work_root), max_turns=24 if official else PILOT_TURNS, max_tool_calls=32,
+                Path(work_root), max_turns=32 if args.books_35b_profile else (24 if official else PILOT_TURNS),
+                max_tool_calls=48 if args.books_35b_profile else 32,
                 execution_seconds=60 if official else 1,
                 # A full six-connection load precedes submission, which repeats it in isolation.
                 rollout_seconds=(args.rollout_seconds or 3600) if official else 120,
@@ -84,6 +94,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.mode, task, config, out, model, args.renderer, 1 if official else args.group_size,
                 args.budget_usd, record, api_key=settings["TINKER_API_KEY"],
                 project_id=settings["TINKER_PROJECT_ID"] or None, seed=args.seed, preflight_only=args.preflight_only,
+                token_budget=TokenBudget(context=12_288, sampled=12_288) if args.books_35b_profile else None,
             ))
     except (KeyboardInterrupt, Exception) as exc:
         cause = type(exc).__name__

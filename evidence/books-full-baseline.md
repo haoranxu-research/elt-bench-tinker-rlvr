@@ -498,3 +498,52 @@ more source-label lookups or review of previously tested files. It still
 allows reading the pending file for editing. It also checks the undefined
 publication rate on authors with no source book relationship, giving
 explicit feedback while a repair window remains.
+
+## Full-score hosted submission
+
+Run `runs/books-full-baseline/stronger-13` used commit `ca79744` and
+Qwen3.6-35B-A3B with the no-thinking renderer, 32 turns, 48 tool calls,
+ten transform attempts, and a 12,288-token context and total generation
+cap. The model loaded all 15 source tables and all 84,337 expected rows.
+It independently wrote, ran, and repaired its SQL in the episode.
+On turn 30 it explicitly submitted all three files. Both pinned
+evaluators ran at revision `3b068d5f15f64541d05fbc33a817e4b08c6bf173`.
+Stage 1 = 1.0, Stage 2 = 1.0, and reward = 1.0. The evaluator ran
+15 count queries and all three model queries. The author, customer,
+and publisher outputs all matched.
+
+The private run directory contains the complete prompt and action token
+traces, decoded tools, persisted model SQL, explicit submission, evaluator
+exports, and output hashes in `audit-result.json`. The audit reconstructed
+all 30 responses, confirmed all 41 executed tool calls and all 38 eligible
+feedback receipts, verified the submitted files came from model writes,
+and found every request within the configured context budget. No prior
+solution or developer-side diagnostic SQL was supplied to this episode.
+
+| Run | Stage 1 | Stage 2 | Reward | Estimated USD |
+| --- | ---: | ---: | ---: | ---: |
+| stronger-09 | 1.0 | 2/3 | 0.783333333 | 0.028896975 |
+| stronger-10 | 1.0 | 2/3 | 0.783333333 | 0.034791330 |
+| stronger-11 | 1.0 | 1/3 | 0.566666667 | 0.037188750 |
+| stronger-12 | 1.0 | 2/3 | 0.783333333 | 0.036166860 |
+| stronger-13 | 1.0 | 1.0 | 1.0 | 0.033142770 |
+
+The full-score run used 7,284 sampled, 150,912 cached input and 21,859
+uncached input tokens. No usage row had posted at audit time. Across
+these five rehearsals, the observed-token estimate is USD 0.170186685
+out of USD 0.35 authorized. USD 0.179813315 remained when local acceptance
+was met. No additional training or Snowflake compute ran.
+
+The official command uses the same model, renderer and bounds through
+`--books-35b-profile`. Its read-only Tinker preflight returned a
+USD 0.19335168 upper bound. Snowflake RSA login and direct grants passed.
+The Gen1 X-Small warehouse was suspended with auto-resume and 60-second
+auto-suspend. The refreshed administrator account confirmed the monitor
+attachment, 0.72 used credits, and 0.78 credits to the immediate
+suspension trigger. The saved SQL passed the project's Snowflake dialect
+parser. The staged book, sale and shipping sort fields had no NULLs,
+and rounding the four local percentage outputs to seven decimal places
+still passed the pinned comparator in a private sensitivity check.
+Native Snowflake compilation and scoring remain pending.
+The full offline suite passed 102 tests in 36.06 seconds.
+[Official launch command](../FINAL_HANDOFF.md#final-live-command)

@@ -520,13 +520,13 @@ the matching hourly windows. Keep delayed metering pending until it appears.
 The warehouse view reports usage credits, and cloud-services credits can
 differ from billed credits. [Warehouse metering](https://docs.snowflake.com/en/sql-reference/account-usage/warehouse_metering_history)
 
-For the proposed Qwen3.5-9B rollout, use the pinned no-thinking renderer
+For the proposed Qwen3.6-35B-A3B rollout, use the pinned no-thinking renderer
 and cache the public tokenizer on S before launch. The account's
 read-only capabilities response confirms base-model sampling availability.
-Use Tinker sampling with the local DuckDB backend for the candidate
-rehearsal. The prepared official command sets a 40-minute rollout limit
-for the verified monitor allowance.
-[Hosted rehearsal and monitor checks](evidence/books-hosted-readiness.md)
+The local DuckDB rehearsal reached full correctness with this model and
+renderer. The prepared official command matches its turn, token, and
+transform budgets with a 40-minute live timeout.
+[Full-score evidence and live preparation](evidence/books-full-baseline.md)
 
 The second November 20 credentialed attempt loaded all 15 streams into
 Snowflake. Validation of the sampled transformations blocked submission.

@@ -8,6 +8,11 @@ includes a pinned Cookbook environment adapter and a test that drives it
 with scripted token actions. The same episode interface supports an official
 Snowflake `books` rollout and a one-step Tinker LoRA command.
 
+The hosted Qwen3.6-35B-A3B agent authored and submitted all three `books`
+transformations on DuckDB. The pinned evaluators returned Stage 1 = 1.0,
+Stage 2 = 1.0 and reward = 1.0. The separate Snowflake grading run
+awaits authorization. [Trajectory and scoring evidence](evidence/books-full-baseline.md)
+
 [Implementation design](DESIGN.md) · [Phase 1 evidence](evidence/phase1.txt) ·
 [Integration evidence](evidence/integrations.txt) · [Final handoff](FINAL_HANDOFF.md) · [Live Tinker pilot](evidence/tinker-pilot.md)
 

@@ -43,6 +43,7 @@ class OfficialConfig:
     report_dir: Path
     # The verified local sync took 339 seconds, including queue and startup time.
     service_timeout: int = 600
+    transform_attempt_limit: int = MAX_TRANSFORM_ATTEMPTS
 
     @classmethod
     def from_environment(cls, report_dir: Path, settings: Mapping[str, str] = os.environ) -> "OfficialConfig":
@@ -150,6 +151,7 @@ class SnowflakeBooksBackend:
         self.create_uncertain = False
         self.load_attempts = 0
         self.transform_attempts = 0
+        self.transform_attempt_limit = config.transform_attempt_limit
         self.report = config.report_dir / self.database
         self.report.mkdir(parents=True, mode=0o700)
 
@@ -341,13 +343,14 @@ class SnowflakeBooksBackend:
         schema = f"{self.database}.BOOKS."
         flag = "CAST(o.wrote_fewer_total_pages_than_the_average AS VARCHAR)"
         (failures, defined_rates), = self._lookup_rows(
-            f"SELECT COUNT(CASE WHEN COALESCE(TRY_CAST({flag} AS DOUBLE), 0) <> 1 "
+            f"WITH unlinked AS (SELECT o.* FROM {schema}authors o WHERE NOT EXISTS "
+            f"(SELECT 1 FROM {schema}book_author ba WHERE ba.author_id = o.author_id)) "
+            f"SELECT (SELECT COUNT(*) FROM unlinked o WHERE COALESCE(TRY_CAST({flag} AS DOUBLE), 0) <> 1 "
             f"AND LOWER(COALESCE({flag}, '')) <> 'true' "
             f"AND EXISTS (SELECT 1 FROM {schema}book b JOIN {schema}book_author ba "
             "ON b.book_id = ba.book_id WHERE b.num_pages > 0) "
-            f"AND NOT EXISTS (SELECT 1 FROM {schema}book WHERE num_pages < 0) THEN 1 END), "
-            f"COUNT(o.per_book_published_1992) FROM {schema}authors o WHERE NOT EXISTS "
-            f"(SELECT 1 FROM {schema}book_author ba WHERE ba.author_id = o.author_id)"
+            f"AND NOT EXISTS (SELECT 1 FROM {schema}book WHERE num_pages < 0)), "
+            "(SELECT COUNT(per_book_published_1992) FROM unlinked)"
         )
         notes = []
         if failures:
