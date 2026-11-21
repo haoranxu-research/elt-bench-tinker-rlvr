@@ -49,13 +49,20 @@ skipped all model queries. [Commands and evidence](evidence/books-final-audit.md
 
 ## Hosted 9B rehearsal
 
+The authorized follow-up with the reserve also ended unsubmitted. It
+loaded all 84,337 rows, but every version of `publishers.sql` failed
+execution. The context guard stopped the episode on turn 19 with no tested
+files and all 54 reserved tokens unused. Both evaluators remain
+unexecuted on model-authored artifacts.
+[Latest hosted trajectory and diagnosis](evidence/books-hosted-reserved-rehearsal.md)
+
 The authorized base `Qwen/Qwen3.5-9B` session loaded all 84,337 staged
 rows, saved all three SQL files, and repaired and tested two. It hit the
 6,144 sampled-token limit before submitting, so neither evaluator ran
 and the unsubmitted reward was 0. A new run requires separate approval.
 [Executed rehearsal and audit](evidence/books-hosted-rehearsal.md)
 
-The prepared follow-up holds back 54 of those 6,144 sampled tokens.
+The follow-up held back 54 of those 6,144 sampled tokens.
 Each canonical Qwen submission call takes 27 tokens. At the work limit
 the host shows the tested files and offers one submit-only turn.
 The archived trajectory was replayed and scored with a scripted final
