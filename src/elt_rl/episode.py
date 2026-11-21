@@ -203,6 +203,10 @@ class ELTEpisodeState:
         if attempts is not None:
             status += f" Warehouse transform attempts left: {attempts}."
         status += f" Current tested files: {tested or 'none'}."
+        if self._loaded:
+            untested = [name for name in self.task.transform_artifacts if name not in self._tested_files]
+            if untested:
+                status += f" Still need successful tests: {', '.join(untested)}."
         if self._tested_files and (turns <= 3 or calls <= 3 or attempts == 0):
             arguments = "{}" if len(self._tested_files) == len(self.task.transform_artifacts) else '{"mode":"partial"}'
             status += f" Use the next turn to call submit_pipeline with {arguments}."
@@ -306,11 +310,16 @@ class ELTEpisodeState:
             names = self.warehouse_columns.get(table.lower())
             if not names:
                 raise PipelineError("table is not materialized in the episode warehouse")
-            return f"{table.lower()}({', '.join(names)})"
+            return self._catalog_table(table.lower(), names)
         return self.backend.inspect() + "\n" + self.catalog_text()
 
     def catalog_text(self) -> str:
-        return "\n".join(f"{name}({', '.join(columns)})" for name, columns in self.warehouse_columns.items())
+        return "\n".join(self._catalog_table(name, columns) for name, columns in self.warehouse_columns.items())
+
+    def _catalog_table(self, name: str, columns: list[str]) -> str:
+        types = getattr(self.backend, "temporal_columns", {})
+        fields = [f"{column} {types[name, column]}" if (name, column) in types else column for column in columns]
+        return f"{name}({', '.join(fields)})"
 
     def _inspect_values(self, table: str, column: str, contains: str = "") -> str:
         if not self._loaded or not hasattr(self.backend, "lookup_values"):

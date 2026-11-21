@@ -341,6 +341,26 @@ def test_lookup_values_are_scoped_and_escape_the_filter():
     assert len(queries) == 1
 
 
+def test_local_books_date_format_translation_reports_the_file(monkeypatch):
+    duckdb = pytest.importorskip("duckdb")
+    pytest.importorskip("pandas")
+    pytest.importorskip("tinker_cookbook")
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "scripts"))
+    from books_model_rehearsal import LocalBooksBackend
+    from elt_rl.contracts import PartialTransformError
+
+    backend = LocalBooksBackend.__new__(LocalBooksBackend)
+    with duckdb.connect() as connection:
+        backend.connection = connection
+        connection.execute("CREATE TABLE source_book(publication_date DATE)")
+        with pytest.raises(PartialTransformError, match=r"authors.sql: .*unsupported Snowflake-to-DuckDB") as error:
+            backend._run_sql(["USE DATABASE memory", "USE SCHEMA books",
+                              "SELECT TO_CHAR(publication_date, 'YYYY') FROM source_book"],
+                             artifact_names=[None, None, "authors.sql"])
+        assert "EXTRACT(YEAR FROM date_column)" in str(error.value)
+        assert connection.execute("SELECT EXTRACT(YEAR FROM DATE '1992-01-01')").fetchone() == (1992,)
+
+
 def test_books_output_shape_checks_public_columns_and_source_ids():
     backend = object.__new__(official.SnowflakeBooksBackend)
     backend.database = "ELT_SESSION"
@@ -781,8 +801,9 @@ def test_official_episode_calls_two_isolated_warehouse_replays(checkout, tmp_pat
 
         def fetchall(self):
             if ".INFORMATION_SCHEMA.COLUMNS " in statements[-1]:
-                return [("AUTHOR", "AUTHOR_ID"), ("AUTHOR", "AUTHOR_NAME"), ("PRIVATE_TABLE", "SECRET"),
-                        *((filename.removesuffix(".sql").upper(), col.upper())
+                return [("AUTHOR", "AUTHOR_ID", "NUMBER"), ("AUTHOR", "AUTHOR_NAME", "TEXT"),
+                        ("BOOK", "PUBLICATION_DATE", "DATE"), ("PRIVATE_TABLE", "SECRET", "TIMESTAMP_NTZ"),
+                        *((filename.removesuffix(".sql").upper(), col.upper(), "TEXT")
                           for filename, cols in task.output_columns.items() for col in cols)]
             if statements[-1].startswith("SELECT COUNT(*), COUNT(DISTINCT"):
                 return [(7, 7, 7, 0)]
@@ -808,6 +829,8 @@ def test_official_episode_calls_two_isolated_warehouse_replays(checkout, tmp_pat
         call("write_pipeline_file", 3, path="load.json", content='{"sources":{"mongodb":["author"]}}')
         loaded = call("execute_pipeline", 4, stage="load").text
         assert "author=7" in loaded and "author(author_id, author_name)" in loaded
+        assert "book(publication_date DATE)" in loaded
+        assert "Still need successful tests: publishers.sql, customers.sql, authors.sql." in loaded
         assert "SECRET" not in loaded
         assert "author(author_id, author_name)" in call("inspect_warehouse", 4, table="author").text
         for turn, name in enumerate(official.MODELS, start=5):

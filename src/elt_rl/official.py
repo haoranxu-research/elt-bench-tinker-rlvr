@@ -134,6 +134,8 @@ def _pack_grade(results_log: str, stage2: dict | None, raw_tables: frozenset[str
 
 
 class SnowflakeBooksBackend:
+    transform_attempt_limit = MAX_TRANSFORM_ATTEMPTS
+
     def __init__(self, directory: Path, episode: EpisodeConfig, config: OfficialConfig,
                  bundle: dict, credentials: dict, raw_tables: frozenset[str]):
         self.directory = directory
@@ -196,7 +198,7 @@ class SnowflakeBooksBackend:
 
     @property
     def remaining_transform_attempts(self) -> int:
-        return max(0, MAX_TRANSFORM_ATTEMPTS - self.transform_attempts)
+        return max(0, self.transform_attempt_limit - self.transform_attempts)
 
     def execute(self, stage: Stage, artifacts: Mapping[str, str]) -> str:
         if stage == "load":
@@ -266,17 +268,20 @@ class SnowflakeBooksBackend:
         if not self.created:
             return {}
         rows = self._run_sql([
-            f"SELECT TABLE_NAME, COLUMN_NAME FROM {self.database}.INFORMATION_SCHEMA.COLUMNS "
+            f"SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE FROM {self.database}.INFORMATION_SCHEMA.COLUMNS "
             "WHERE TABLE_SCHEMA = 'BOOKS' ORDER BY TABLE_NAME, ORDINAL_POSITION"
         ])
         return self._column_catalog(rows)
 
     def _column_catalog(self, rows) -> dict[str, list[str]]:
         tables = {}
+        self.temporal_columns = {}
         allowed = self.raw_tables | set(MODELS)
-        for table, column in rows:
+        for table, column, data_type in rows:
             if table.lower() in allowed:
                 tables.setdefault(table.lower(), []).append(column.lower())
+                if data_type.upper().startswith(("DATE", "TIME")):
+                    self.temporal_columns[table.lower(), column.lower()] = data_type.upper()
         return tables
 
     def lookup_values(self, table: str, column: str, contains: str) -> list:

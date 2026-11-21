@@ -11,7 +11,7 @@ from urllib.request import Request, urlopen
 
 import duckdb
 from sqlglot import transpile
-from sqlglot.errors import SqlglotError
+from sqlglot.errors import ErrorLevel, SqlglotError, UnsupportedError
 
 from books_evaluator_smoke import REFERENCE_HASHES, evaluate_local, load_local_inputs, result_fields, save_result, sha256
 from elt_rl.airbyte import streams
@@ -30,6 +30,8 @@ HOSTED_TURNS = 32
 
 class LocalBooksBackend(SnowflakeBooksBackend):
     """Reuse the official stage and SQL checks while substituting DuckDB for transport."""
+
+    transform_attempt_limit = 10
 
     def __init__(self, bundle, assets):
         self.bundle = bundle
@@ -56,13 +58,18 @@ class LocalBooksBackend(SnowflakeBooksBackend):
         for index, statement in enumerate(statements[2:], start=2):
             name = artifact_names[index]
             try:
-                query, = transpile(statement, read="snowflake", write="duckdb")
+                query, = transpile(statement, read="snowflake", write="duckdb",
+                                   unsupported_level=ErrorLevel.RAISE)
                 self.connection.execute(query)
             except (SqlglotError, duckdb.Error) as error:
                 message = str(error)
+                if isinstance(error, UnsupportedError):
+                    message = "unsupported Snowflake-to-DuckDB translation: " + message
                 if "must appear in the GROUP BY clause" in message:
                     message = message.split("\nEither ", 1)[0]
                     message += "\nUse a deterministic aggregate or compute the measure in a separate grouped CTE."
+                if "'~~(DATE, " in message or "'~~(TIMESTAMP, " in message or "expression 'ToChar'" in message:
+                    message += "\nFor a year comparison, use EXTRACT(YEAR FROM date_column) with a numeric year."
                 detail = f"{name}: local SQL error: {message}"
                 raise PartialTransformError(detail, tuple(tested)) from None
             tested.append(name)
@@ -76,7 +83,7 @@ class LocalBooksBackend(SnowflakeBooksBackend):
 
     def columns(self):
         return self._column_catalog(self.connection.execute(
-            "SELECT table_name, column_name FROM information_schema.columns "
+            "SELECT table_name, column_name, data_type FROM information_schema.columns "
             "WHERE lower(table_schema) = 'books' ORDER BY table_name, ordinal_position",
         ).fetchall())
 
