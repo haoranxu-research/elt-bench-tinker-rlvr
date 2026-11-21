@@ -547,3 +547,20 @@ still passed the pinned comparator in a private sensitivity check.
 Native Snowflake compilation and scoring remain pending.
 The full offline suite passed 102 tests in 36.06 seconds.
 [Official launch command](../FINAL_HANDOFF.md#final-live-command)
+
+The fresh Airbyte-to-local-PostgreSQL probe passed all six connections.
+Jobs 73 through 78 succeeded and all 15 table counts matched, totaling
+84,337 rows. The sync sequence took about 9 minutes 27 seconds, excluding
+provisioning and cleanup. The probe reported complete cleanup of its
+temporary connections and database. The active worker reported
+`SYNC_JOB_MAX_ATTEMPTS=1`. This probe used no Snowflake destination.
+The checked commands and results are preserved in
+`official35-source-check.log`, `official35-snowflake-check.log`,
+`official35-tinker-preflight/manifest.json`, and
+`official35-monitor.json` under the private run root.
+
+An independent replay of the exact saved model SQL after the final
+production-profile changes again returned 1.0 at both stages on DuckDB.
+It is recorded as developer-side reproduction in
+`stronger-13-reproduction/summary.json`. Only the earlier hosted
+submission is counted as the model-driven acceptance artifact.

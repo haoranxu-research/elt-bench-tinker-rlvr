@@ -90,6 +90,10 @@ warehouse visibility, grants, and monitor attachment passed read-only
 checks.
 [Official setup](LIVE_SETUP.md#official-snowflake-books)
 
+The refreshed Airbyte probe completed six local syncs and matched all
+15 counts, totaling 84,337 rows. Probe cleanup completed. The worker
+has one sync attempt per job. [Preflight evidence](evidence/books-full-baseline.md#full-score-hosted-submission)
+
 ```powershell
 $private = Join-Path $env:LOCALAPPDATA 'ELTBenchBooks'
 $env:ELT_BOOKS_INPUT_DIR = Join-Path $private 'books'
