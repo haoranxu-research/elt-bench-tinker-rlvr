@@ -88,6 +88,7 @@ BOOKS_INSTRUCTION = (
     "Check that a join to a finer grain has not duplicated the records counted or summed. A group rank needs PARTITION BY. "
     "Use explicit NULL ordering for ranked rows when needed and examine whether an inner join drops entities without related rows. "
     "When a comparison uses an average across all entities, include those without related rows in the population. "
+    "Take the entity key from the preserved side of a LEFT JOIN so unmatched entities retain their identities. "
     "For each model, use write_pipeline_file(path, content) to save the full SQL query, then test just "
     "that file with execute_pipeline(stage=transform, file=filename). Rewrite the named file when it fails. "
     "Only write_pipeline_file accepts SQL text. Follow the remaining budget and tested files in tool feedback. "

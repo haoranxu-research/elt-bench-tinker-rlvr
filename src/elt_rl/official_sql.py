@@ -101,9 +101,21 @@ def public_sql_review(sql: str, model_section: str) -> list[str]:
                             "so it cannot count qualifying rows. Check what is being counted.")
             break
     for select in query.find_all(exp.Select):
+        source = select.args.get("from_")
+        author = source.this if source is not None else None
         for join in select.args.get("joins", ()):
             table = join.this
             condition = join.args.get("on")
+            if (isinstance(author, exp.Table) and author.name.lower() == "author"
+                    and isinstance(table, exp.Table) and table.name.lower() == "book_author"
+                    and join.side == "LEFT" and any(
+                        isinstance(column, exp.Column) and column.name.lower() == "author_id"
+                        and column.table.lower() == table.alias_or_name.lower()
+                        for projection in select.expressions for column in projection.find_all(exp.Column)
+                    )):
+                feedback.append(f"The author identifier comes from the nullable side of the left join "
+                                f"({table.alias_or_name}.author_id). Use the preserved author table's identifier "
+                                "for author-level grouping so unmatched authors keep distinct IDs.")
             if not isinstance(table, exp.Table) or table.name.lower() != "order_line" or condition is None:
                 continue
             order_alias = table.alias_or_name.lower()

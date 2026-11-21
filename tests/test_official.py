@@ -399,6 +399,15 @@ def test_public_review_reminds_author_average_population_without_sale_join():
     assert not public_sql_review(sql, "average_pages: Average over authors with books.")
 
 
+def test_public_review_flags_nullable_author_identifier_after_left_join():
+    sql = ("SELECT ba.author_id, b.num_pages FROM author a "
+           "LEFT JOIN book_author ba ON a.author_id = ba.author_id "
+           "LEFT JOIN book b ON ba.book_id = b.book_id")
+    assert "nullable side of the left join (ba.author_id)" in public_sql_review(sql, "")[0]
+    assert not public_sql_review(sql.replace("SELECT ba.author_id", "SELECT a.author_id"), "")
+    assert not public_sql_review(sql.replace("LEFT JOIN book_author", "JOIN book_author"), "")
+
+
 def test_public_review_separates_average_sale_price_from_maximum_price():
     sql = """WITH expensive AS (
         SELECT book_id, MAX(price) AS highest_price FROM order_line GROUP BY book_id
