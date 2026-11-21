@@ -361,7 +361,7 @@ class SnowflakeBooksBackend:
         if not all(columns <= set(sources.get(table, ())) for table, columns in required.items()):
             return None
         schema = f"{self.database}.BOOKS."
-        (shipping, book_range), = self._lookup_rows(
+        (shipping, book_range, invalid_labels), = self._lookup_rows(
             "WITH domestic_only AS ("
             f"SELECT co.customer_id FROM {schema}cust_order co LEFT JOIN {schema}shipping_method sm "
             "ON sm.method_id = co.shipping_method_id GROUP BY co.customer_id "
@@ -371,7 +371,10 @@ class SnowflakeBooksBackend:
             f"(SELECT COUNT(*) FROM {schema}customers o JOIN domestic_only d ON o.customer_id = d.customer_id "
             "WHERE COALESCE(TRY_CAST(CAST(o.per_order_shipped_internationally AS VARCHAR) AS DOUBLE), -1) <> 0), "
             f"(SELECT COUNT(*) FROM {schema}customers WHERE "
-            "TRY_CAST(CAST(per_books_over_13 AS VARCHAR) AS DOUBLE) NOT BETWEEN 0 AND 100.000001)"
+            "TRY_CAST(CAST(per_books_over_13 AS VARCHAR) AS DOUBLE) NOT BETWEEN 0 AND 100.000001), "
+            f"(SELECT COUNT(*) FROM {schema}customers o WHERE o.preferred_shipping_method IS NOT NULL "
+            f"AND NOT EXISTS (SELECT 1 FROM {schema}shipping_method sm "
+            "WHERE sm.method_name = CAST(o.preferred_shipping_method AS VARCHAR)))"
         )
         notes = []
         if shipping:
@@ -380,7 +383,34 @@ class SnowflakeBooksBackend:
         if book_range:
             notes.append(f"{book_range} customer book-price percentages fall outside 0 to 100. "
                          "Use the same grain in both counts. Repeat purchases of a title are separate ordered books.")
+        if invalid_labels:
+            notes.append(f"{invalid_labels} non-NULL preferred shipping methods are not observed shipping method names. "
+                         "Return the method name, rather than its numeric identifier.")
         return " ".join(notes) or None
+
+    def author_title_check(self, sources: dict[str, list[str]]) -> str | None:
+        required = {"book": {"book_id", "title"}, "book_author": {"author_id", "book_id"},
+                    "order_line": {"book_id", "price"}}
+        if not all(columns <= set(sources.get(table, ())) for table, columns in required.items()):
+            return None
+        schema = f"{self.database}.BOOKS."
+        (failures,), = self._lookup_rows(
+            "WITH priced AS ("
+            f"SELECT ba.author_id, b.title, ol.price FROM {schema}book_author ba "
+            f"JOIN {schema}book b ON b.book_id = ba.book_id "
+            f"JOIN {schema}order_line ol ON ol.book_id = b.book_id WHERE ol.price IS NOT NULL"
+            "), candidate AS ("
+            f"SELECT o.author_id, MAX(p.price) AS selected_price FROM {schema}authors o LEFT JOIN priced p "
+            "ON p.author_id = o.author_id AND p.title = CAST(o.most_expensive_book AS VARCHAR) GROUP BY o.author_id"
+            ") SELECT COUNT(*) FROM candidate c WHERE EXISTS "
+            "(SELECT 1 FROM priced p WHERE p.author_id = c.author_id "
+            "AND (c.selected_price IS NULL OR p.price > c.selected_price))"
+        )
+        if failures:
+            return (f"{failures} proposed most-expensive books have no priced sale or are beaten by a higher sale "
+                    "for that author. Check the title ranking against observed sale prices. "
+                    "An average sale price can change the ranking.")
+        return None
 
     def _clear(self) -> None:
         if self.airbyte:

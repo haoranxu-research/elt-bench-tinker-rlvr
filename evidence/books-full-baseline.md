@@ -452,3 +452,35 @@ shipping methods only. Run 07's customer SQL passed the same check.
 A static advisory points out when a purchase percentage counts
 distinct titles. These checks use only raw source data, the task
 description, and the model's own SQL and outputs.
+
+Run 10 (`748c382`) saw the customer check, repaired the customer query,
+and produced exact customer and publisher outputs. The model spent several
+turns rereading those files after compaction. It saved an author draft on
+turn 30, then reread the instructions on turn 31 instead of testing it.
+Its reserved turn 32 submitted the two tested files. Stage 1 was 1.0,
+Stage 2 was 2/3, and the reward was 0.7833333333333333. The audit matched
+32 prompt/response pairs, 39 executed calls and 35 eligible receipts.
+Observed usage implies USD 0.03479133. A separate developer-only execution
+of the unsubmitted author SQL confirmed it also had semantic errors,
+including the 110 unmatched authors. That execution did not change the
+rollout score or become a new model submission.
+
+The follow-up keeps the schemas, public requirements, current draft status,
+and any identified data-check failures during compaction. When loading
+has already completed, the compacted prompt omits the original loading
+instructions and emphasizes completing the remaining files. The regression
+suite passed 101 tests in 32.63 seconds.
+
+Run 11 (`72336c9`, 14,336 context tokens) completed all three files and
+submitted on turn 26. Stage 1 was 1.0, Stage 2 was 1/3, and the reward
+was 0.5666666666666667. The publisher matched. The customer query returned
+shipping method IDs instead of names, and the author query ranked titles
+by average price rather than their most expensive observed sale.
+Observed usage implies USD 0.03718875.
+
+Replaying its unchanged SQL through new public checks found 1,697
+unrecognized shipping method values and 218 author titles dominated by
+higher observed sales or with no priced sale. Run 07's saved inputs
+passed both checks. These checks inspect candidate outputs and source
+values only. They do not provide a scored-column comparison or disclose
+reference records.

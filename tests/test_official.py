@@ -478,16 +478,37 @@ def test_public_customer_rate_check_uses_observed_shipping_and_percentage_range(
                    "v(customer_id, shipping_method_id)")
         db.execute("CREATE TABLE books.shipping_method AS SELECT * FROM (VALUES (1, 'Standard'), (2, 'International')) "
                    "v(method_id, method_name)")
-        db.execute("CREATE TABLE books.customers AS SELECT * FROM (VALUES (10, 100, 120), (20, 100, 100), (30, NULL, 0)) "
-                   "v(customer_id, per_order_shipped_internationally, per_books_over_13)")
+        db.execute("CREATE TABLE books.customers AS SELECT * FROM "
+                   "(VALUES (10, 100, 120, '1'), (20, 100, 100, 'International'), (30, NULL, 0, NULL)) "
+                   "v(customer_id, per_order_shipped_internationally, per_books_over_13, preferred_shipping_method)")
         backend._lookup_rows = lambda query: db.execute(query).fetchall()
         sources = {"cust_order": ["customer_id", "shipping_method_id"],
                    "shipping_method": ["method_id", "method_name"]}
         issue = backend.customer_rate_check(sources)
         assert "only non-International shipping methods" in issue and "outside 0 to 100" in issue
-        db.execute("UPDATE books.customers SET per_order_shipped_internationally = 0, per_books_over_13 = 100 "
+        assert "not observed shipping method names" in issue
+        db.execute("UPDATE books.customers SET per_order_shipped_internationally = 0, per_books_over_13 = 100, "
+                   "preferred_shipping_method = 'Standard' "
                    "WHERE customer_id = 10")
         assert backend.customer_rate_check(sources) is None
+
+
+def test_public_author_title_check_rejects_a_title_beaten_by_a_higher_sale():
+    duckdb = pytest.importorskip("duckdb")
+    backend = official.SnowflakeBooksBackend.__new__(official.SnowflakeBooksBackend)
+    backend.database = "memory"
+    with duckdb.connect() as db:
+        db.execute("CREATE SCHEMA books")
+        db.execute("CREATE TABLE books.book AS SELECT * FROM (VALUES (1, 'First'), (2, 'Second')) v(book_id, title)")
+        db.execute("CREATE TABLE books.book_author AS SELECT * FROM (VALUES (1, 10), (2, 10)) v(book_id, author_id)")
+        db.execute("CREATE TABLE books.order_line AS SELECT * FROM (VALUES (1, 10), (1, 30), (2, 25)) v(book_id, price)")
+        db.execute("CREATE TABLE books.authors AS SELECT 10 AS author_id, 'Second' AS most_expensive_book")
+        backend._lookup_rows = lambda query: db.execute(query).fetchall()
+        sources = {"book": ["book_id", "title"], "book_author": ["author_id", "book_id"],
+                   "order_line": ["book_id", "price"]}
+        assert "beaten by a higher sale" in backend.author_title_check(sources)
+        db.execute("UPDATE books.authors SET most_expensive_book = 'First'")
+        assert backend.author_title_check(sources) is None
 
 
 def test_public_customer_sql_review_distinguishes_titles_from_ordered_copies():

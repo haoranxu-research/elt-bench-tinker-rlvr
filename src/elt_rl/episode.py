@@ -490,6 +490,9 @@ class ELTEpisodeState:
                         if (filename == "authors.sql" and hasattr(self.backend, "author_page_check")
                                 and "average total pages of all authors" in self.task.sections.get("authors", "").lower()):
                             problem = self.backend.author_page_check(self.warehouse_columns)
+                        if filename == "authors.sql" and hasattr(self.backend, "author_title_check"):
+                            title_problem = self.backend.author_title_check(self.warehouse_columns)
+                            problem = " ".join(note for note in (problem, title_problem) if note) or None
                         if (filename == "customers.sql" and hasattr(self.backend, "customer_rate_check")
                                 and "shipped internationally" in self.task.sections.get("customers", "").lower()):
                             problem = self.backend.customer_rate_check(self.warehouse_columns)
