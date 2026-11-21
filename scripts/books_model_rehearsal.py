@@ -220,10 +220,15 @@ async def run_hosted(args, task, bundle, assets, expected, evaluator_calls):
 
     reasoning = args.renderer == "qwen3_5"
     budget = HOSTED_REASONING_BUDGET if reasoning else HOSTED_BUDGET
-    if args.context_cap is not None:
+    if args.books_35b_profile:
+        budget = TokenBudget(context=12_288, sampled=12_288)
+    elif args.context_cap is not None:
         budget = replace(budget, context=args.context_cap)
-    config = EpisodeConfig(args.out / "work", max_turns=args.turn_cap, max_tool_calls=48,
-                           rollout_seconds=600, max_submissions=1)
+    config = EpisodeConfig(args.out / "work", max_turns=40 if args.books_35b_profile else args.turn_cap,
+                           max_tool_calls=60 if args.books_35b_profile else 48,
+                           rollout_seconds=2400 if args.books_35b_profile else 600, max_submissions=1,
+                           defer_grading=args.books_35b_profile,
+                           grading_seconds=1500 if args.books_35b_profile else None)
     try:
         result = await run_remote(
             "books-rehearsal", task, config, args.out, args.model, args.renderer, 1, args.budget_usd, record,
@@ -300,6 +305,8 @@ if __name__ == "__main__":
     parser.add_argument("--native-tools", action="store_true", help="Use Ollama tool rendering with the same dispatcher")
     parser.add_argument("--port", type=int, default=11435)
     parser.add_argument("--hosted", action="store_true", help="Use Tinker sampling and local DuckDB")
+    parser.add_argument("--books-35b-profile", action="store_true",
+                        help="Use the native retry's model, time, action, and token limits locally")
     parser.add_argument("--book-publication-date-text", action="store_true",
                         help="Mirror Airbyte's observed Snowflake TEXT type for book.publication_date")
     parser.add_argument("--preflight-only", action="store_true", help="Check hosted prerequisites without creating a session")
@@ -311,6 +318,12 @@ if __name__ == "__main__":
                         metavar="20..32", help="Optional lower hosted turn cap for cost control")
     parser.add_argument("--env-file", type=Path, default=Path(".env"))
     args = parser.parse_args()
+    if args.books_35b_profile and (
+        not args.hosted or args.model != "Qwen/Qwen3.6-35B-A3B" or args.renderer != DEFAULT_RENDERER
+        or args.context_cap is not None or args.turn_cap != HOSTED_TURNS or not args.book_publication_date_text
+    ):
+        parser.error("--books-35b-profile requires hosted Qwen/Qwen3.6-35B-A3B, the default renderer, "
+                     "--book-publication-date-text, and no turn or context overrides")
     if args.hosted:
         if args.native_tools or not (args.preflight_only or args.allow_paid):
             parser.error("--hosted requires --preflight-only or explicit --allow-paid and uses the pinned tool protocol")

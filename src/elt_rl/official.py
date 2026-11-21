@@ -300,10 +300,12 @@ class SnowflakeBooksBackend:
     def _column_catalog(self, rows) -> dict[str, list[str]]:
         tables = {}
         self.temporal_columns = {}
+        self.column_types = {}
         allowed = self.raw_tables | set(MODELS)
         for table, column, data_type in rows:
             if table.lower() in allowed:
                 tables.setdefault(table.lower(), []).append(column.lower())
+                self.column_types[table.lower(), column.lower()] = data_type.upper()
                 if data_type.upper().startswith(("DATE", "TIME")) or column.lower().endswith(("_date", "_time")):
                     self.temporal_columns[table.lower(), column.lower()] = data_type.upper()
         return tables

@@ -32,6 +32,8 @@ class ToolSpec:
         if "offset" in properties:
             properties["offset"] = {"type": "integer", "minimum": 0, "maximum": 999999,
                                     "description": "Character offset from the previous file response."}
+        if "version" in properties:
+            properties["version"].update(enum=["current", "previous"], default="current")
         return {
             "type": "object",
             "properties": properties,
@@ -52,14 +54,15 @@ TOOLS = {
 
 BOOKS_TOOLS = {
     **TOOLS,
-    "inspect_warehouse": ToolSpec("Show actual materialized tables and columns. Pass table for one table.",
+    "inspect_warehouse": ToolSpec("Show actual materialized tables and columns. Pass table for one table and its types.",
                                    optional=("table",)),
     "inspect_values": ToolSpec("Read distinct source values. Use book.publication_date to check the date format, "
                                "or a lookup column from book_language, shipping_method, or country. "
                                "Optionally filter by substring.",
                                ("table", "column"), ("contains",)),
-    "read_pipeline_file": ToolSpec("Read saved SQL. Use the next offset from the response for a long file.",
-                                   ("path",), ("offset",)),
+    "read_pipeline_file": ToolSpec("Read saved SQL. Use version=previous for the immediately preceding SQL draft. "
+                                   "Use the next offset from the response for a long file.",
+                                   ("path",), ("offset", "version")),
     "execute_pipeline": ToolSpec(
         "Load saved load.json with stage=load, optionally specifying file=load.json. To test one saved SQL file, pass "
         "stage=transform and file set to that filename. An omitted file tests the complete batch.",
@@ -147,6 +150,8 @@ class ELTEpisodeState:
         self._tested_files: dict[str, int] = {}
         self._unattempted_files: set[str] = set()
         self._failed_public_checks: dict[str, str] = {}
+        self._failed_transforms: dict[str, str] = {}
+        self._previous_drafts: dict[str, bytes] = {}
         self._requested_public_review: set[str] = set()
         self._last_turn = 0
         self._calls = 0
@@ -349,13 +354,13 @@ class ELTEpisodeState:
         if self._loaded and table is not None:
             name = table.lower()
             if name in self.warehouse_columns and any(name in streams for streams in self.task.load_streams.values()):
-                return self._catalog_table(name, self.warehouse_columns[name])
+                return self._catalog_table(name, self.warehouse_columns[name], typed=True)
         self.warehouse_columns = self.backend.columns() if self._loaded else {}
         if table is not None:
             names = self.warehouse_columns.get(table.lower())
             if not names:
                 raise PipelineError("table is not materialized in the episode warehouse")
-            return self._catalog_table(table.lower(), names)
+            return self._catalog_table(table.lower(), names, typed=True)
         return self.backend.inspect() + "\n" + self.catalog_text()
 
     def catalog_text(self) -> str:
@@ -370,10 +375,10 @@ class ELTEpisodeState:
         lines.extend(self._catalog_table(name, columns) for name, columns in self.warehouse_columns.items())
         return "\n".join(lines)
 
-    def _catalog_table(self, name: str, columns: list[str]) -> str:
-        types = getattr(self.backend, "temporal_columns", {})
+    def _catalog_table(self, name: str, columns: list[str], *, typed: bool = False) -> str:
+        types = getattr(self.backend, "column_types" if typed else "temporal_columns", {})
         fields = [f"{column} {types[name, column]}" if (name, column) in types else column for column in columns
-                  if not column.startswith(("_airbyte_", "_ab_source_file_"))]
+                  if not column.startswith(("_airbyte_", "_ab_source_file_", "_ab_cdc_"))]
         return f"{name}({', '.join(fields)})"
 
     def _inspect_values(self, table: str, column: str, contains: str = "") -> str:
@@ -382,14 +387,22 @@ class ELTEpisodeState:
         values = self.backend.lookup_values(table, column, contains)
         return f"{table}.{column} distinct source values (up to 30): " + json.dumps(values, ensure_ascii=False)
 
-    def _read_pipeline_file(self, path: str, offset: str = "0") -> str:
+    def _read_pipeline_file(self, path: str, offset: str = "0", version: str = "current") -> str:
         if path not in self._allowed or not offset.isdecimal() or len(offset) > 6:
             raise PipelineError("use an approved saved filename and a decimal character offset")
-        content = self._read((path,))[path]
+        if version == "previous":
+            if path not in self._previous_drafts:
+                raise PipelineError(f"no previous SQL draft is saved for {path}")
+            content = self._previous_drafts[path].decode("utf-8")
+        elif version == "current":
+            content = self._read((path,))[path]
+        else:
+            raise PipelineError("version must be current or previous")
         start = int(offset)
         end = min(start + 1250, len(content))
         next_page = f" Next offset: {end}." if end < len(content) else ""
-        return f"{path}, characters {start}–{end} of {len(content)}.{next_page}\n" + content[start:end]
+        label = f"{path} (previous draft)" if version == "previous" else path
+        return f"{label}, characters {start}–{end} of {len(content)}.{next_page}\n" + content[start:end]
 
     def compact_state(self, turn: int) -> str:
         task_state = self.task.instructions
@@ -398,6 +411,8 @@ class ELTEpisodeState:
                           "SELECT files against the loaded warehouse. Keep previously tested files unless "
                           "a specific check identified a problem.")
         details = [task_state, self._list_workspace(), self._submission_status(turn)]
+        details.extend(f"{name} latest execution failure: {problem}" for name, problem in self._failed_transforms.items())
+        details.extend(f"{name} open public check: {problem}" for name, problem in self._failed_public_checks.items())
         if self.warehouse_columns:
             details.append("Actual warehouse columns:\n" + self.catalog_text())
         if self.source_labels:
@@ -405,7 +420,6 @@ class ELTEpisodeState:
         details.extend(f"{name}:\n{section}" for name, section in self.task.sections.items())
         if self.latest_error:
             details.append("Most recent tool error:\n" + self.latest_error)
-        details.extend(f"{filename}: {problem}" for filename, problem in self._failed_public_checks.items())
         return "\n\n".join(details) + "\nSaved files are unchanged."
 
     def recovery_action(self) -> str:
@@ -418,10 +432,17 @@ class ELTEpisodeState:
         for name in self.task.transform_artifacts:
             if name in self._tested_files:
                 continue
+            if name in self._failed_transforms and name not in self._unattempted_files:
+                previous = (" Its preceding draft is available with version=previous."
+                            if name in self._previous_drafts else "")
+                return f"Repair saved {name} using the last execution error before testing it again.{previous}"
             if (self.artifact_dir / name).exists():
                 return (f"The source data is loaded. Test saved {name} with execute_pipeline, "
                         f"stage=transform and file={name}.")
             return f"The source data is loaded. Write only {name} with write_pipeline_file."
+        if self._failed_public_checks:
+            name = next(iter(self._failed_public_checks))
+            return f"Repair the open public check for {name}, then re-execute that file. Keep the other tested files."
         return "All current SQL files have passed their tests. Call submit_pipeline to grade them."
 
     @property
@@ -432,7 +453,9 @@ class ELTEpisodeState:
         if self.task.partial_transforms:
             return ", ".join(
                 f"{name}: " + (
-                    "tested" if name in self._tested_files or (name in self.task.load_artifacts and self._loaded)
+                    "tested, public check open" if name in self._tested_files and name in self._failed_public_checks
+                    else "tested" if name in self._tested_files or (name in self.task.load_artifacts and self._loaded)
+                    else "failed, needs repair" if name in self._failed_transforms and name not in self._unattempted_files
                     else "saved, needs execution" if (self.artifact_dir / name).is_file() else "missing"
                 )
                 for name in self._allowed
@@ -460,25 +483,33 @@ class ELTEpisodeState:
             except PipelineError as error:
                 raise PipelineError(f"{error} load.json was not changed.") from None
         target = self.artifact_dir / path
-        if self.task.partial_transforms and target.is_file() and target.read_bytes() == encoded:
-            return f"{path} already contains these bytes. Use list_workspace to check execution status."
+        if self.task.partial_transforms and target.is_file():
+            current = target.read_bytes()
+            if current == encoded:
+                return f"{path} already contains these bytes. Use list_workspace to check execution status."
+            if path in self.task.transform_artifacts:
+                self._previous_drafts[path] = current
         target.write_bytes(encoded)
         self._tested_turn = None
         self._tested_files.pop(path, None)
-        self._failed_public_checks.pop(path, None)
+        self._requested_public_review.discard(path)
         if self.task.partial_transforms and path in self.task.transform_artifacts:
             self._unattempted_files.add(path)
         if path in self.task.load_artifacts:
             self._loaded = False
             self._tested_files.clear()
             self._failed_public_checks.clear()
+            self._failed_transforms.clear()
+            self._requested_public_review.clear()
             self.warehouse_columns.clear()
             self.source_labels = ""
         if not self.task.partial_transforms:
             return f"saved {path}"
         stage = "load" if path in self.task.load_artifacts else "transform"
         target_args = f" and file={path}" if stage == "transform" else ""
-        return f"saved {path} ({len(encoded)} bytes). Next: execute_pipeline with stage={stage}{target_args}."
+        previous = (" The previous SQL draft is available with read_pipeline_file version=previous."
+                    if path in self._previous_drafts else "")
+        return f"saved {path} ({len(encoded)} bytes). Next: execute_pipeline with stage={stage}{target_args}.{previous}"
 
     def _read(self, names: tuple[str, ...]) -> dict[str, str]:
         missing = [name for name in names if not (self.artifact_dir / name).is_file()]
@@ -520,8 +551,12 @@ class ELTEpisodeState:
                 result = self.backend.execute("transform", artifacts)
             except PartialTransformError as error:
                 errors = self._track_tests(tuple(name for name in error.tested_files if name in names), turn)
+                self._remember_transform_failure(names, str(error), file)
                 if errors:
                     raise PipelineError(str(error) + "\nPublic output shape failures:\n" + "\n".join(errors)) from None
+                raise
+            except PipelineError as error:
+                self._remember_transform_failure(names, str(error), file)
                 raise
             errors = self._track_tests(names, turn)
             if errors:
@@ -557,6 +592,14 @@ class ELTEpisodeState:
             return result
         raise PipelineError("stage must be load or transform")
 
+    def _remember_transform_failure(self, names: tuple[str, ...], message: str, file: str | None) -> None:
+        if not self.task.partial_transforms:
+            return
+        for name in names:
+            lines = [line for line in message.splitlines() if line.startswith(f"{name}: ")]
+            if lines or name == file:
+                self._failed_transforms[name] = "\n".join(lines or [message])[:600]
+
     def _track_tests(self, names: tuple[str, ...], turn: int) -> list[str]:
         errors = []
         for filename in names:
@@ -565,9 +608,11 @@ class ELTEpisodeState:
                        if expected and hasattr(self.backend, "output_shape") else None)
             if problem:
                 self._tested_files.pop(filename, None)
+                self._failed_transforms[filename] = problem[:600]
                 errors.append(f"{filename}: {problem}")
             else:
                 self._tested_files[filename] = turn
+                self._failed_transforms.pop(filename, None)
         return errors
 
     def _submit(self, turn: int, mode: str) -> str:

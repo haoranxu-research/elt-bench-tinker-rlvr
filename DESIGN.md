@@ -127,3 +127,10 @@ submissions. The best run matched both submitted tables and returned the same
 trajectory also produced aligned offline training datums using its actual
 sampled tokens and log probabilities. Full correctness on native Snowflake
 remains open. [Native evidence](evidence/books-snowflake-completion.md)
+
+The tool state distinguishes tested, failed and newly saved SQL. Context
+compaction carries per-file execution failures and open public checks. The
+agent can read the preceding SQL draft explicitly after an overwrite, and
+targeted schema inspection returns physical source types. The next model
+validation uses the Snowflake TEXT date mirror and the native profile's
+action and token limits. [Offline readiness](evidence/books-offline-readiness.md)

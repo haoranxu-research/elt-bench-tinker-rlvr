@@ -16,6 +16,7 @@ Its warehouse grade and trajectory reward agreed at 0.783333. Full native
 correctness remains open.
 [Local scoring evidence](evidence/books-full-baseline.md)
 [Native grading and diagnosis](evidence/books-snowflake-completion.md)
+[Offline readiness and proposed validation](evidence/books-offline-readiness.md)
 
 [Implementation design](DESIGN.md) · [Phase 1 evidence](evidence/phase1.txt) ·
 [Integration evidence](evidence/integrations.txt) · [Final handoff](FINAL_HANDOFF.md) · [Live Tinker pilot](evidence/tinker-pilot.md)

@@ -363,3 +363,10 @@ qualified identifier. The retry also retained two zero defaults after the
 customer public check flagged them. Neither native attempt submitted a tested
 author model. The tracked controls and the final unresolved issues are in the
 [completion evidence](evidence/books-snowflake-completion.md#retry-diagnosis).
+
+The follow-up measured the archived action budgets and reproduced the
+failures with the observed TEXT date type. Both episodes exhausted turns
+with more than 11 minutes and thousands of sampled tokens left. The
+archived 35B full-score trajectory still submitted three files under the
+current budgets with inferred dates. It could not submit them on the TEXT
+mirror. [Per-turn timing, local controls and next gate](evidence/books-offline-readiness.md)

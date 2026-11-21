@@ -13,6 +13,7 @@
 [Earlier credentialed rollout](evidence/books-snowflake-final.md) ·
 [35B native grading and diagnosis](evidence/books-snowflake-35b.md) ·
 [Latest authorized Snowflake rollouts](evidence/books-snowflake-completion.md) ·
+[Offline readiness and proposed local validation](evidence/books-offline-readiness.md) ·
 [Hosted model correctness and diagnostics](evidence/books-full-baseline.md) ·
 [Hosted submission and official preflight](evidence/books-context-completion.md) ·
 [Tinker optimizer evidence](evidence/tinker-pilot.md) ·
@@ -76,6 +77,10 @@ tokens, and 8,192 sampled tokens. Measured usage implies **USD
 0.015649827**. The DuckDB rehearsal used no Snowflake compute.
 
 ## Final live command
+
+The next validation gate is one hosted local run using the native profile
+and the TEXT date mirror. It requires a new Tinker authorization and uses
+no Snowflake compute. [Prepared local command and launch gate](evidence/books-offline-readiness.md#next-validation-and-spending-gate)
 
 The commands below reproduce the two authorized 35B Snowflake rollouts.
 Use a fresh output directory and obtain separate authorization before

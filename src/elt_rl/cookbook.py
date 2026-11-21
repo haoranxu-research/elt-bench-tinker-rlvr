@@ -6,6 +6,7 @@ import logging
 import shutil
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from pathlib import Path
 from time import monotonic
 
@@ -46,12 +47,15 @@ class EpisodeTool:
         return {"name": self.name, "description": self.description, "parameters": self.parameters_schema}
 
     def _dispatch_with_receipt(self, input: ToolInput, turn: int):
+        started = monotonic()
         feedback = self.episode.dispatch(self.name, input.arguments, turn=turn)
         if self.trace_file is not None:
             with self.trace_file.open("a", encoding="utf-8") as stream:
                 stream.write(json.dumps({"turn": turn, "tool": self.name, "call_id": input.call_id,
                                          "arguments": input.arguments, "feedback": feedback.text,
-                                         "submitted": feedback.submitted, "accepted": feedback.accepted}) + "\n")
+                                         "submitted": feedback.submitted, "accepted": feedback.accepted,
+                                         "finished_utc": datetime.now(timezone.utc).isoformat(),
+                                         "elapsed_seconds": round(monotonic() - started, 6)}) + "\n")
         return feedback
 
     async def run(self, input: ToolInput) -> ToolResult:
@@ -337,6 +341,7 @@ class BooksRollout(RolloutStrategy):
             if not last.episode_done or not last.ac.tokens:
                 raise RuntimeError("accepted submission is missing its sampled terminal action")
             worker = asyncio.create_task(asyncio.to_thread(episode.finish_submission))
+            started = monotonic()
             try:
                 grade = await asyncio.shield(worker)
             except asyncio.CancelledError:
@@ -347,6 +352,7 @@ class BooksRollout(RolloutStrategy):
                 last, reward=grade.reward,
                 metrics={**last.metrics, **grade.metrics(),
                          f"grading/{episode.grading_status}": 1,
+                         "grading/replay_and_cleanup_seconds": round(monotonic() - started, 6),
                          "grading/cleanup_required": int(episode.grading_cleanup_required)},
             )
         return RolloutResult([trajectory], [env], [])

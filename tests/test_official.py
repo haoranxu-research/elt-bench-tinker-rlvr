@@ -567,6 +567,48 @@ def test_author_rate_detects_bad_text_date_parsing():
         assert backend.author_publication_check(sources) is None
 
 
+def test_public_warning_survives_rewrite_until_retest(tmp_path):
+    from elt_rl.contracts import TaskDefinition
+
+    class Backend:
+        repaired = False
+
+        def execute(self, stage, artifacts):
+            if "customers.sql" in artifacts:
+                self.repaired = "NULL" in artifacts["customers.sql"]
+            return "executed"
+
+        def customer_rate_check(self, _columns):
+            return None if self.repaired else "Undefined customer rates have a zero default."
+
+        def close(self):
+            pass
+
+    task = TaskDefinition("books", "task", ("load.json",), ("publishers.sql", "customers.sql"),
+                          lambda *_: Backend(), lambda _: Grade(), partial_transforms=True,
+                          sections={"customers": "percentage of orders shipped internationally"},
+                          output_columns={"customers.sql": ("rate",)})
+    with ELTEpisodeState(task, EpisodeConfig(tmp_path)) as episode:
+        def run(tool, turn, **arguments):
+            return episode.dispatch(tool, arguments, turn=turn).text
+
+        run("read_task", 1)
+        run("write_pipeline_file", 2, path="load.json", content="{}")
+        run("execute_pipeline", 3, stage="load")
+        run("write_pipeline_file", 4, path="publishers.sql", content="SELECT * FROM publisher")
+        run("execute_pipeline", 5, stage="transform", file="publishers.sql")
+        run("write_pipeline_file", 6, path="customers.sql", content="SELECT 0 AS rate FROM customer")
+        assert "Public data check failed" in run("execute_pipeline", 7, stage="transform", file="customers.sql")
+        assert "Repair the open public check for customers.sql" in episode.recovery_action()
+        run("write_pipeline_file", 8, path="customers.sql", content="SELECT NULL AS rate FROM customer")
+        assert "Undefined customer rates" in episode.compact_state(8)
+        assert episode.tested_files == ("publishers.sql",)
+        assert "Test saved customers.sql" in episode.recovery_action()
+        run("execute_pipeline", 9, stage="transform", file="customers.sql")
+        assert "Undefined customer rates" not in episode.compact_state(9)
+        assert episode.tested_files == ("publishers.sql", "customers.sql")
+
+
 def test_public_customer_rate_check_uses_observed_shipping_and_percentage_range():
     duckdb = pytest.importorskip("duckdb")
     backend = official.SnowflakeBooksBackend.__new__(official.SnowflakeBooksBackend)
@@ -686,7 +728,7 @@ def test_books_write_repair_submit_and_fresh_replay(tmp_path, monkeypatch, mode)
     task = TaskDefinition("books", "three files", ("load.json",), files,
                           open_backend, verify, partial_transforms=True)
     last_turn = 8 if mode == "complete" else 5
-    with ELTEpisodeState(task, EpisodeConfig(tmp_path, max_turns=last_turn)) as episode:
+    with ELTEpisodeState(task, EpisodeConfig(tmp_path, max_turns=last_turn, max_tool_calls=32)) as episode:
         def call(tool, turn, **args):
             return episode.dispatch(tool, args, turn=turn)
 
@@ -707,8 +749,12 @@ def test_books_write_repair_submit_and_fresh_replay(tmp_path, monkeypatch, mode)
         failure = call("execute_pipeline", 4, stage="transform").text
         assert "customers.sql: Snowflake query failed" in failure
         assert "Current tested files: publishers.sql" in failure
+        listing = call("list_workspace", 4).text
+        assert "customers.sql: failed, needs repair" in listing
+        assert "Repair saved customers.sql" in episode.recovery_action()
+        assert "invalid identifier 'BAD_COLUMN'" in episode.compact_state(4)
         assert "later turn" in call("submit_pipeline", 4, mode="partial").text
-        assert "publishers.sql: tested" in call("list_workspace", 4).text
+        assert "publishers.sql: tested" in listing
         assert episode.grade() == Grade() and len(opened) == 1
         if mode == "complete":
             assert "Tested: publishers.sql" in call(
@@ -720,8 +766,11 @@ def test_books_write_repair_submit_and_fresh_replay(tmp_path, monkeypatch, mode)
             assert "later turn" in call("submit_pipeline", 5, mode="partial").text
             assert "authors.sql" in call("submit_pipeline", 6).text
             call("write_pipeline_file", 6, path="customers.sql", content="SELECT * FROM author")
+            previous = call("read_pipeline_file", 6, path="customers.sql", version="previous").text
+            assert "(previous draft)" in previous and "SELECT BAD_COLUMN FROM author" in previous
             assert "customers.sql: saved, needs execution" in call("list_workspace", 6).text
             assert "Tested:" in call("execute_pipeline", 7, stage="transform").text
+            assert "latest execution failure" not in episode.compact_state(7)
             assert "reserved for submit_pipeline" in call(
                 "write_pipeline_file", 8, path="authors.sql", content="SELECT BAD_COLUMN FROM author",
             ).text
@@ -1105,7 +1154,7 @@ def test_official_episode_calls_two_isolated_warehouse_replays(checkout, tmp_pat
         assert "Still need successful tests: publishers.sql, customers.sql, authors.sql." in loaded
         assert "SECRET" not in loaded
         catalog_queries = len(statements)
-        assert "author(author_id, author_name)" in call("inspect_warehouse", 4, table="author").text
+        assert "author(author_id NUMBER, author_name TEXT)" in call("inspect_warehouse", 4, table="author").text
         assert len(statements) == catalog_queries
         for turn, name in enumerate(official.MODELS, start=5):
             call("write_pipeline_file", turn, path=f"{name}.sql", content="SELECT * FROM author")

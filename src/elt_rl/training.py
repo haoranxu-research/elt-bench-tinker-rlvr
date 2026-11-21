@@ -8,6 +8,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, replace
 from importlib.metadata import version
 from pathlib import Path
+from time import monotonic
 
 import tinker
 from tinker.lib.base_url import DEFAULT_BASE_URL
@@ -38,6 +39,7 @@ class RecordedTokenCompleter(TinkerTokenCompleter):
             with self.prompt_trace_file.open("a", encoding="utf-8") as stream:
                 stream.write(json.dumps({"prompt_token_ids": model_input.to_ints(), "stop": stop,
                                          "max_tokens": max_tokens}, allow_nan=False) + "\n")
+        started = monotonic()
         sample = await super().__call__(model_input, stop, max_tokens=max_tokens)
         logprobs = sample.logprobs
         if (len(sample.tokens) != len(logprobs) or not all(math.isfinite(p) for p in logprobs)
@@ -49,6 +51,7 @@ class RecordedTokenCompleter(TinkerTokenCompleter):
                     "sequence_id": sample.sequence_id, "tokens": sample.tokens, "logprobs": logprobs,
                     "stop_reason": sample.stop_reason, "prompt_tokens": model_input.length,
                     "prefill_cached_tokens": sample.prompt_cache_hit_tokens,
+                    "sampling_elapsed_seconds": round(monotonic() - started, 6),
                 }, allow_nan=False) + "\n")
         return sample
 
