@@ -355,6 +355,33 @@ class SnowflakeBooksBackend:
                     "Check the preserved author key, the input population of the average, and the final comparison.")
         return None
 
+    def customer_rate_check(self, sources: dict[str, list[str]]) -> str | None:
+        required = {"cust_order": {"customer_id", "shipping_method_id"},
+                    "shipping_method": {"method_id", "method_name"}}
+        if not all(columns <= set(sources.get(table, ())) for table, columns in required.items()):
+            return None
+        schema = f"{self.database}.BOOKS."
+        (shipping, book_range), = self._lookup_rows(
+            "WITH domestic_only AS ("
+            f"SELECT co.customer_id FROM {schema}cust_order co LEFT JOIN {schema}shipping_method sm "
+            "ON sm.method_id = co.shipping_method_id GROUP BY co.customer_id "
+            "HAVING COUNT(*) = COUNT(sm.method_name) "
+            "AND SUM(CASE WHEN UPPER(sm.method_name) = 'INTERNATIONAL' THEN 1 ELSE 0 END) = 0"
+            ") SELECT "
+            f"(SELECT COUNT(*) FROM {schema}customers o JOIN domestic_only d ON o.customer_id = d.customer_id "
+            "WHERE COALESCE(TRY_CAST(CAST(o.per_order_shipped_internationally AS VARCHAR) AS DOUBLE), -1) <> 0), "
+            f"(SELECT COUNT(*) FROM {schema}customers WHERE "
+            "TRY_CAST(CAST(per_books_over_13 AS VARCHAR) AS DOUBLE) NOT BETWEEN 0 AND 100.000001)"
+        )
+        notes = []
+        if shipping:
+            notes.append(f"{shipping} customers whose orders use only non-International shipping methods "
+                         "do not have a zero international rate. Check the shipping-method label and denominator.")
+        if book_range:
+            notes.append(f"{book_range} customer book-price percentages fall outside 0 to 100. "
+                         "Use the same grain in both counts. Repeat purchases of a title are separate ordered books.")
+        return " ".join(notes) or None
+
     def _clear(self) -> None:
         if self.airbyte:
             self.airbyte.cleanup()

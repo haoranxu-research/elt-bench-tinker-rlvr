@@ -426,3 +426,29 @@ launch. USD 0.07633233 remains, below the USD 0.09013248 bound of the
 smallest tested profile. Shortening that last profile had already
 left the agent without time to test its customer repair or write the
 author file. No further hosted run or Snowflake workload started.
+
+## Additional USD 0.35 authorization
+
+The ninth 35B rehearsal (`stronger-09`, revision `0b6f100`) used the
+no-thinking renderer with 32 turns and a 12,288-token context cap. The
+new execution check derives a necessary property from public relationships
+and source page counts. It caught 110 misclassified authors in the saved
+runs 04 and 07 and passed the same page classification in run 05. It
+provides one opportunity to review a detected failure before submission
+when the run has budget left. It preserves explicit final submission and
+the pinned graders' authority.
+
+In run 09 the model saw the author check fail, rewrote its own SQL, and
+then scored an exact match on every author column. The publisher model
+also matched. The customer query counted distinct titles for the
+book-price rate and treated a destination country on file as evidence
+of international shipping. Stage 1 was 1.0, Stage 2 was 2/3, reward
+was 0.7833333333333333, and observed tokens imply USD 0.028896975.
+
+The follow-up checks the public rate boundaries on candidate results.
+An offline replay of the actual run 09 SQL reported 658 nonzero
+international percentages for customers with known non-international
+shipping methods only. Run 07's customer SQL passed the same check.
+A static advisory points out when a purchase percentage counts
+distinct titles. These checks use only raw source data, the task
+description, and the model's own SQL and outputs.

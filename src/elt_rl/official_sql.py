@@ -92,6 +92,11 @@ def public_sql_review(sql: str, model_section: str) -> list[str]:
         if not isinstance(value, exp.Distinct) or len(value.expressions) != 1:
             continue
         case = value.expressions[0]
+        if ("books whose price" in model_section.lower() and isinstance(case, exp.Column)
+                and case.name.lower() == "book_id"):
+            feedback.append("COUNT(DISTINCT book_id) counts titles rather than ordered copies. Check that the "
+                            "price percentage counts each ordered copy in both numerator and denominator.")
+            break
         if not isinstance(case, exp.Case):
             continue
         branches = [branch.args.get("true") for branch in case.args.get("ifs", [])]

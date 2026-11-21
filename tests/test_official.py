@@ -468,6 +468,35 @@ def test_public_author_page_check_uses_source_relationships_and_candidate_flag()
         assert backend.author_page_check(sources) is None
 
 
+def test_public_customer_rate_check_uses_observed_shipping_and_percentage_range():
+    duckdb = pytest.importorskip("duckdb")
+    backend = official.SnowflakeBooksBackend.__new__(official.SnowflakeBooksBackend)
+    backend.database = "memory"
+    with duckdb.connect() as db:
+        db.execute("CREATE SCHEMA books")
+        db.execute("CREATE TABLE books.cust_order AS SELECT * FROM (VALUES (10, 1), (20, 2), (30, 3)) "
+                   "v(customer_id, shipping_method_id)")
+        db.execute("CREATE TABLE books.shipping_method AS SELECT * FROM (VALUES (1, 'Standard'), (2, 'International')) "
+                   "v(method_id, method_name)")
+        db.execute("CREATE TABLE books.customers AS SELECT * FROM (VALUES (10, 100, 120), (20, 100, 100), (30, NULL, 0)) "
+                   "v(customer_id, per_order_shipped_internationally, per_books_over_13)")
+        backend._lookup_rows = lambda query: db.execute(query).fetchall()
+        sources = {"cust_order": ["customer_id", "shipping_method_id"],
+                   "shipping_method": ["method_id", "method_name"]}
+        issue = backend.customer_rate_check(sources)
+        assert "only non-International shipping methods" in issue and "outside 0 to 100" in issue
+        db.execute("UPDATE books.customers SET per_order_shipped_internationally = 0, per_books_over_13 = 100 "
+                   "WHERE customer_id = 10")
+        assert backend.customer_rate_check(sources) is None
+
+
+def test_public_customer_sql_review_distinguishes_titles_from_ordered_copies():
+    section = "Percentage of the books whose price is over $13 among all the books ordered by the customer."
+    assert "counts titles rather than ordered copies" in public_sql_review(
+        "SELECT 100 * SUM(price > 13) / COUNT(DISTINCT book_id) FROM order_line", section)[0]
+    assert not public_sql_review("SELECT 100 * SUM(price > 13) / COUNT(*) FROM order_line", section)
+
+
 def test_books_accepts_boolean_join_and_filter_conditions():
     sql = safe_select(
         "SELECT c.id FROM customer c LEFT JOIN address a ON c.id = a.id AND a.active = 1 "

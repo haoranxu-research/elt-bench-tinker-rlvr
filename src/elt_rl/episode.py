@@ -480,12 +480,16 @@ class ELTEpisodeState:
 
                     for filename, sql in artifacts.items():
                         self._failed_public_checks.pop(filename, None)
+                        problem = None
                         if (filename == "authors.sql" and hasattr(self.backend, "author_page_check")
                                 and "average total pages of all authors" in self.task.sections.get("authors", "").lower()):
                             problem = self.backend.author_page_check(self.warehouse_columns)
-                            if problem:
-                                self._failed_public_checks[filename] = problem
-                                feedback += f"\n{filename}: Public data check failed. {problem}"
+                        if (filename == "customers.sql" and hasattr(self.backend, "customer_rate_check")
+                                and "shipped internationally" in self.task.sections.get("customers", "").lower()):
+                            problem = self.backend.customer_rate_check(self.warehouse_columns)
+                        if problem:
+                            self._failed_public_checks[filename] = problem
+                            feedback += f"\n{filename}: Public data check failed. {problem}"
                         for note in public_sql_review(sql, self.task.sections.get(filename.removesuffix(".sql"), "")):
                             feedback += f"\n{filename}: {note}"
                 return feedback
