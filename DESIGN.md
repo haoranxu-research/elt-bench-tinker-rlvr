@@ -8,7 +8,8 @@ specifications. `list_workspace` lists artifacts, and `write_pipeline_file`
 edits only task-approved files. `execute_pipeline` runs extraction/loading
 or transformations and returns bounded feedback. `inspect_warehouse`
 reports materialized table counts. `submit_pipeline` requests fresh replay
-and grading.
+and grading. For `books`, the warehouse tool can also list actual
+columns, and `read_pipeline_file` reads saved SQL in pages.
 
 For official `books`, a write receipt names the saved file and the next
 execution step. The workspace lists missing, saved, and tested files.
@@ -22,8 +23,11 @@ budgets. The last turn and last tool call are reserved for explicit
 submission. Hosted books rollouts also reserve sampled tokens for one
 submission response and show the remaining sampled budget in feedback.
 At the work limit the final prompt lists the tested files and exposes
-only the submit tool. An interrupted work action does not reach the
-dispatcher. The official grader gives absent
+only the submit tool. Sampling is bounded by the rendered context and
+the remaining tokens. Context compaction carries forward the task,
+warehouse columns, public relationships, workspace status and recent
+error. SQL files stay in the workspace and remain readable. An interrupted
+work action does not reach the dispatcher. The official grader gives absent
 models zero Stage 2 credit. The run stores the candidate files and a
 separate submitted-file manifest.
 

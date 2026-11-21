@@ -5,12 +5,13 @@
 | Requirement | Executed evidence | Status |
 | --- | --- | --- |
 | Credential-free, multi-turn ELT | The SQLite trace repaired a failed transform, submitted from a later turn, and earned 1.0 on a fresh replay. The test suite covers faulty input, failed transforms, partial and unsubmitted scores, and cleanup. | Complete |
+| Hosted agent submission with pinned books grading | Qwen3.5-9B repaired and submitted two model-authored SQL files on DuckDB. Stage 1 = 1.0, Stage 2 = 0.0, reward = 0.35. | Complete on the local destination |
 | Credentialed official task | The November 21 Qwen rollout loaded all 84,337 expected rows into Snowflake. It ended unsubmitted after 24 turns with reward 0. Neither evaluator ran against Snowflake. | Live load verified. Scored agent submission pending. |
 | Real Tinker RL update | A previous pilot completed one optimizer step from execution-derived SQLite rewards and verified a changed probe and matching checkpoint metadata. | Complete |
 | Submission materials | The repository, reproduction guide, design, and professor summary are ready for review. | Local deliverables complete |
 
 [Latest credentialed rollout](evidence/books-snowflake-final.md) ·
-[Current model and submission preflight](evidence/books-model-readiness.md) ·
+[Hosted submission and official preflight](evidence/books-context-completion.md) ·
 [Tinker optimizer evidence](evidence/tinker-pilot.md) ·
 [Design](DESIGN.md) · [Professor-facing summary](PROFESSOR_SUMMARY.md)
 
@@ -49,48 +50,26 @@ skipped all model queries. [Commands and evidence](evidence/books-final-audit.md
 
 ## Hosted 9B rehearsal
 
-The authorized follow-up with the reserve also ended unsubmitted. It
-loaded all 84,337 rows, but every version of `publishers.sql` failed
-execution. The context guard stopped the episode on turn 19 with no tested
-files and all 54 reserved tokens unused. Both evaluators remain
-unexecuted on model-authored artifacts.
-[Latest hosted trajectory and diagnosis](evidence/books-hosted-reserved-rehearsal.md)
+With context compaction and live column inspection, the hosted
+`Qwen/Qwen3.5-9B` rehearsal independently repaired and submitted its
+tested publisher and customer SQL files. Both pinned evaluators ran
+through DuckDB. Stage 1 was 1.0, Stage 2 was 0.0, and the reward was
+0.35. The model spent 27 of the 54 reserved tokens on its final
+tool call. One paid rehearsal met the target and no repeats ran.
+[Trajectory, evaluators, and usage](evidence/books-context-completion.md)
 
-The authorized base `Qwen/Qwen3.5-9B` session loaded all 84,337 staged
-rows, saved all three SQL files, and repaired and tested two. It hit the
-6,144 sampled-token limit before submitting, so neither evaluator ran
-and the unsubmitted reward was 0. A new run requires separate approval.
-[Executed rehearsal and audit](evidence/books-hosted-rehearsal.md)
-
-The follow-up held back 54 of those 6,144 sampled tokens.
-Each canonical Qwen submission call takes 27 tokens. At the work limit
-the host shows the tested files and offers one submit-only turn.
-The archived trajectory was replayed and scored with a scripted final
-action. An actual model-chosen submission remains unverified.
-[Reserve implementation and offline evidence](evidence/books-submission-reserve.md)
-
-The same tools and tokenizer as the official run execute against DuckDB
-on the staged `books` data.
-The pinned evaluator scores the model's own submission through local
-transport. The model receives public schemas and tool feedback.
-Reference CSVs stay with the evaluator. Check the tool trace for the
-model's file writes, execution results, and explicit accepted
-submission, and inspect both evaluator stages before launching Snowflake.
+Executed command for the local hosted run:
 
 ```powershell
 $env:HF_HOME = (Resolve-Path runs/books-offline-model/hf).Path
 $env:HF_HUB_OFFLINE = '1'
 $env:TRANSFORMERS_OFFLINE = '1'
-.\.venv\Scripts\python.exe -c 'from pathlib import Path; import sys,runpy; sys.path.append(str(Path(sys.base_prefix)/""Lib""/""site-packages"")); sys.path.insert(0,""scripts""); sys.path.append("".venv-core/Lib/site-packages""); runpy.run_path(""scripts/books_model_rehearsal.py"",run_name=""__main__"")' --hosted --allow-paid --budget-usd 0.08 --checkout ../upstream-elt-bench --assets runs/books-assets --out runs/books-9b-rehearsal-reserved-live
+.\.venv\Scripts\python.exe -c 'from pathlib import Path; import sys,runpy; sys.path.append(str(Path(sys.base_prefix)/""Lib""/""site-packages"")); sys.path.insert(0,""scripts""); sys.path.append("".venv-core/Lib/site-packages""); runpy.run_path(""scripts/books_model_rehearsal.py"",run_name=""__main__"")' --hosted --allow-paid --budget-usd 0.10 --checkout ../upstream-elt-bench --assets runs/books-assets --out runs/books-context-loop/attempt-01
 ```
 
-The uncached estimate is **USD 0.078686208** for at most 20 turns,
-12,288 context tokens, and 6,144 sampled tokens. The work phase can use
-at most 6,090 sampled tokens. Finalization uses the 54-token reserve
-once and stops after that response. This uses no Snowflake
-compute. Only the pinned public tokenizer is needed locally.
-Both launch commands accept `--preflight-only` in place of the paid
-flags. Use a fresh evidence directory for each command.
+The uncached bound was **USD 0.095084544** for 24 turns, 12,288 context
+tokens, and 8,192 sampled tokens. Measured usage implies **USD
+0.015649827**. The DuckDB rehearsal used no Snowflake compute.
 
 ## Final live command
 
@@ -99,8 +78,10 @@ The pending candidate is the base `Qwen/Qwen3.5-9B` with its pinned
 no-thinking renderer. The runner writes exact prompt token IDs and
 sampled actions to an ignored run directory. It permits one group member,
 24 turns, 32 tool calls, one explicit grading replay, and a 40-minute
-rollout timeout. Model submission remains unverified. This command
-requires separate approval for Snowflake and Tinker.
+rollout timeout. The model submission and evaluator workflow passed on
+DuckDB. Snowflake credentials, warehouse metadata, direct grants, and
+the launch budget passed read-only checks. The cloud run awaits separate
+authorization for Snowflake and Tinker.
 [Official setup](LIVE_SETUP.md#official-snowflake-books)
 
 ```powershell
@@ -129,10 +110,8 @@ cleanup. A continuously active standard Gen1 X-Small warehouse uses
 attachment and approximately 0.78 credits until immediate suspension.
 Forty minutes of continuous Gen1 X-Small compute is 0.667 credits.
 The monitor remains the backstop for in-flight work, resume minimums,
-other metered usage, and cleanup. The two Tinker bounds sum to
-**USD 0.203261952** at checked rates. The requested Tinker caps sum to
-**USD 0.23** across the two runs.
-[Latest checks and commands](evidence/books-hosted-readiness.md)
+other metered usage, and cleanup.
+[Latest checks and commands](evidence/books-context-completion.md#official-rollout-readiness)
 [Tinker rate card](https://tinker-docs.thinkingmachines.ai/tinker/models.json) ·
 [Snowflake warehouse billing](https://docs.snowflake.com/en/user-guide/warehouses-overview#impact-on-credit-usage-and-billing)
 

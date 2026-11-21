@@ -39,6 +39,11 @@ batch failures and shows which files can be submitted before the budget
 expires. The pinned grader and reward weights are unchanged. The
 November 21 run's database and Airbyte resources were removed. A graded
 model submission on Snowflake remains pending.
+The hosted Qwen3.5-9B rehearsal on DuckDB independently repaired and
+submitted two SQL files. The pinned evaluators returned Stage 1 of 1.0,
+Stage 2 of 0.0, and reward 0.35. The read-only checks for the official
+Snowflake run passed and compute awaits authorization.
+[Hosted submission evidence](evidence/books-context-completion.md)
 [Design](DESIGN.md) [Latest credentialed evidence](evidence/books-snowflake-final.md)
 [Model and protocol evidence](evidence/books-model-readiness.md)
 [Final reproducibility and acceptance status](FINAL_HANDOFF.md)
