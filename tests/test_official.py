@@ -15,7 +15,7 @@ from elt_rl.books_setup import AIRBYTE_FIELDS, RUNTIME_FILES, bind_airbyte, stag
 from elt_rl.airbyte import AirbyteRun, select_streams, streams, terraform_plan
 from elt_rl.contracts import EpisodeConfig, Grade, PipelineError
 from elt_rl.episode import ELTEpisodeState
-from elt_rl.official_sql import safe_select
+from elt_rl.official_sql import safe_select, undeclared_rate_defaults
 
 
 @pytest.mark.parametrize(("error", "message"), [
@@ -339,6 +339,23 @@ def test_lookup_values_are_scoped_and_escape_the_filter():
     with pytest.raises(PipelineError, match="use up to"):
         backend.lookup_values("country", "country_name", "%;")
     assert len(queries) == 1
+
+
+def test_public_review_flags_undefined_rate_defaults_but_preserves_zero_numerator():
+    query = """
+        SELECT CASE WHEN total_books > 0 THEN 100.0 * eligible / total_books ELSE 0.0 END AS books_pct,
+               COALESCE(100.0 * matched / total_orders, 0) AS order_pct,
+               SUM(CASE WHEN eligible > 0 THEN eligible ELSE 0 END) AS contributions,
+               COALESCE(publisher_rate, 0) AS publisher_pct
+        FROM orders
+    """
+    public_definitions = (
+        "books_pct: Percentage of books above the cutoff.\n"
+        "order_pct: The percentage of international orders.\n"
+        "contributions: The percentage of filtered contributions.\n"
+        "publisher_pct: Percentage of eligible publishers, replace NULL values with 0.\n"
+    )
+    assert undeclared_rate_defaults(query, public_definitions) == ["books_pct", "order_pct"]
 
 
 def test_local_books_date_format_translation_reports_the_file(monkeypatch):

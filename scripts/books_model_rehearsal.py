@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import math
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from time import monotonic
@@ -214,13 +215,16 @@ async def run_hosted(args, task, bundle, assets, expected, evaluator_calls):
         temp.replace(args.out / "manifest.json")
 
     reasoning = args.renderer == "qwen3_5"
+    budget = HOSTED_REASONING_BUDGET if reasoning else HOSTED_BUDGET
+    if args.context_cap is not None:
+        budget = replace(budget, context=args.context_cap)
     config = EpisodeConfig(args.out / "work", max_turns=HOSTED_TURNS, max_tool_calls=48 if reasoning else 32,
                            rollout_seconds=600, max_submissions=1)
     try:
         result = await run_remote(
             "books-rehearsal", task, config, args.out, args.model, args.renderer, 1, args.budget_usd, record,
             api_key=settings["TINKER_API_KEY"], project_id=settings["TINKER_PROJECT_ID"] or None,
-            token_budget=HOSTED_REASONING_BUDGET if reasoning else HOSTED_BUDGET, preflight_only=args.preflight_only,
+            token_budget=budget, preflight_only=args.preflight_only,
         )
         record(evaluator_queries=evaluator_calls)
         return result
@@ -294,6 +298,8 @@ if __name__ == "__main__":
     parser.add_argument("--preflight-only", action="store_true", help="Check hosted prerequisites without creating a session")
     parser.add_argument("--allow-paid", action="store_true", help="Confirm authorization for one hosted rehearsal")
     parser.add_argument("--budget-usd", type=float, default=0.17)
+    parser.add_argument("--context-cap", type=int,
+                        metavar="8192..16384", help="Optional lower hosted context cap for cost control")
     parser.add_argument("--env-file", type=Path, default=Path(".env"))
     args = parser.parse_args()
     if args.hosted:
@@ -301,7 +307,9 @@ if __name__ == "__main__":
             parser.error("--hosted requires --preflight-only or explicit --allow-paid and uses the pinned tool protocol")
         if not math.isfinite(args.budget_usd) or args.budget_usd <= 0:
             parser.error("--budget-usd must be finite and positive")
-    elif args.preflight_only or args.allow_paid:
+        if args.context_cap is not None and not 8192 <= args.context_cap <= 16_384:
+            parser.error("--context-cap must be between 8192 and 16384")
+    elif args.preflight_only or args.allow_paid or args.context_cap is not None:
         parser.error("hosted flags require --hosted")
     try:
         raise SystemExit(asyncio.run(run(args)))

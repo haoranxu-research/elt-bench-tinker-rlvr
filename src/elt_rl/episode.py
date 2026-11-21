@@ -91,7 +91,9 @@ BOOKS_INSTRUCTION = (
     "that file with execute_pipeline(stage=transform, file=filename). Rewrite the named file when it fails. "
     "Only write_pipeline_file accepts SQL text. Follow the remaining budget and tested files in tool feedback. "
     "Get at least one execution result for every required model before spending multiple turns reviewing "
-    "already tested SQL. Test each new file directly after saving it. Review the public requirements and "
+    "already tested SQL. Do not revise a saved draft again until you have tested it. You can call "
+    "write_pipeline_file and then execute_pipeline for that file in the same turn. "
+    "Review the public requirements and "
     "check the required metrics before submitting. Submit on a later turn after testing. "
     "If time or transform attempts are running out, "
     'call submit_pipeline with {"mode":"partial"} to grade the current tested subset. '
@@ -433,8 +435,9 @@ class ELTEpisodeState:
             names = (file,) if file is not None else self.task.transform_artifacts
             if file is not None:
                 self._tested_files.pop(file, None)
+            artifacts = self._read(names)
             try:
-                result = self.backend.execute("transform", self._read(names))
+                result = self.backend.execute("transform", artifacts)
             except PartialTransformError as error:
                 errors = self._track_tests(tuple(name for name in error.tested_files if name in names), turn)
                 if errors:
@@ -445,7 +448,18 @@ class ELTEpisodeState:
                 raise PipelineError("SQL executed, but the public output shape failed:\n" + "\n".join(errors))
             self._tested_turn = turn
             if self.task.partial_transforms:
-                return result + " Tested: " + ", ".join(names) + ". Submit on a later turn once ready."
+                feedback = result + " Tested: " + ", ".join(names) + ". Submit on a later turn once ready."
+                if self.task.output_columns:
+                    from .official_sql import undeclared_rate_defaults
+
+                    for filename, sql in artifacts.items():
+                        names_with_defaults = undeclared_rate_defaults(
+                            sql, self.task.sections.get(filename.removesuffix(".sql"), ""))
+                        if names_with_defaults:
+                            feedback += (f"\n{filename}: Review these percentage columns: "
+                                         f"{', '.join(names_with_defaults)}. The public requirements do not specify "
+                                         "zero for an undefined rate. Check what happens when the denominator is missing.")
+                return feedback
             return result
         raise PipelineError("stage must be load or transform")
 

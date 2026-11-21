@@ -34,6 +34,34 @@ def _identifier_label(name: str) -> str:
     return "".join(ch for ch in name[:80] if ch.isalnum() or ch in "_$") or "(quoted identifier)"
 
 
+def undeclared_rate_defaults(sql: str, model_section: str) -> list[str]:
+    """Flag direct zero defaults where the public rate definition requests none."""
+    fields = (line.partition(": ") for line in model_section.splitlines())
+    described_rates = {
+        name.lower() for name, _, description in fields
+        if "percentage" in description.lower() and "null" not in description.lower()
+        and "default" not in description.lower()
+    }
+    if not described_rates:
+        return []
+    query, = parse(sql, read="snowflake")
+    result = []
+    for projection in query.selects:
+        name = projection.output_name.lower()
+        if name not in described_rates or not isinstance(projection, exp.Alias):
+            continue
+        expression = projection.this
+        if isinstance(expression, exp.Case):
+            defaults = [expression.args.get("default")]
+        elif isinstance(expression, exp.Coalesce):
+            defaults = expression.expressions
+        else:
+            continue
+        if any(isinstance(value, exp.Literal) and value.is_number and value.to_py() == 0 for value in defaults):
+            result.append(name)
+    return result
+
+
 def safe_select(sql: str, raw_tables: frozenset[str]) -> str:
     try:
         statements = parse(sql, read="snowflake")
