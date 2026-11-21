@@ -77,7 +77,8 @@ BOOKS_INSTRUCTION = (
     "Use bare filenames. Inspect actual warehouse columns and read the relevant model and relationship sections before writing SQL. "
     "Start with one short independent transformation and get it tested. Check each join key against the schema. "
     "Inspect source values before filtering coded labels. Keep undefined rates NULL unless the task says to fill them. "
-    "Keep the numeric precision unless rounding is requested. For one row per entity, aggregate each measure at its "
+    "Use percentage points (100.0 times the ratio) for a percentage. Keep precision unless rounding is requested. "
+    "Audit that numerator and denominator use the same source grain. For one row per entity, aggregate each measure at its "
     "own grain before joining, and use a ROW_NUMBER CTE for a ranked row rather than correlated ORDER BY/LIMIT. "
     "For each model, use write_pipeline_file(path, content) to save the full SQL query, then test just "
     "that file with execute_pipeline(stage=transform, file=filename). Rewrite the named file when it fails. "
@@ -125,6 +126,7 @@ class ELTEpisodeState:
         self.finalizing = False
         self.sampled_tokens_left: tuple[int, int] | None = None
         self.warehouse_columns: dict[str, list[str]] = {}
+        self.source_labels = ""
         self.latest_error = ""
 
     @property
@@ -313,6 +315,8 @@ class ELTEpisodeState:
         details = [self.task.instructions, self._list_workspace(), self._submission_status(turn)]
         if self.warehouse_columns:
             details.append("Actual warehouse columns:\n" + self.catalog_text())
+        if self.source_labels:
+            details.append(self.source_labels)
         details.extend(f"{name}:\n{section}" for name, section in self.task.sections.items())
         if self.latest_error:
             details.append("Most recent tool error:\n" + self.latest_error)
@@ -363,6 +367,7 @@ class ELTEpisodeState:
             self._loaded = False
             self._tested_files.clear()
             self.warehouse_columns.clear()
+            self.source_labels = ""
         if not self.task.partial_transforms:
             return f"saved {path}"
         stage = "load" if path in self.task.load_artifacts else "transform"
@@ -388,7 +393,10 @@ class ELTEpisodeState:
             self._loaded = True
             if self.task.load_streams and hasattr(self.backend, "columns"):
                 self.warehouse_columns = self.backend.columns()
-                return result + "\nActual columns:\n" + self.catalog_text()
+                if hasattr(self.backend, "source_labels") and {"book_language", "shipping_method"} & self.warehouse_columns.keys():
+                    labels = self.backend.source_labels(self.warehouse_columns)
+                    self.source_labels = "Observed source labels (book_language pairs are code, name): " + json.dumps(labels)
+                return result + "\n" + self.source_labels + "\nActual columns:\n" + self.catalog_text()
             return result
         if stage == "transform":
             if file is not None and file not in self.task.transform_artifacts:
@@ -403,16 +411,31 @@ class ELTEpisodeState:
             try:
                 result = self.backend.execute("transform", self._read(names))
             except PartialTransformError as error:
-                self._tested_files.update(dict.fromkeys(
-                    (name for name in error.tested_files if name in names), turn,
-                ))
+                errors = self._track_tests(tuple(name for name in error.tested_files if name in names), turn)
+                if errors:
+                    raise PipelineError(str(error) + "\nPublic output shape failures:\n" + "\n".join(errors)) from None
                 raise
+            errors = self._track_tests(names, turn)
+            if errors:
+                raise PipelineError("SQL executed, but the public output shape failed:\n" + "\n".join(errors))
             self._tested_turn = turn
-            self._tested_files.update(dict.fromkeys(names, turn))
             if self.task.partial_transforms:
                 return result + " Tested: " + ", ".join(names) + ". Submit on a later turn once ready."
             return result
         raise PipelineError("stage must be load or transform")
+
+    def _track_tests(self, names: tuple[str, ...], turn: int) -> list[str]:
+        errors = []
+        for filename in names:
+            expected = self.task.output_columns.get(filename)
+            problem = (self.backend.output_shape(filename.removesuffix(".sql"), expected)
+                       if expected and hasattr(self.backend, "output_shape") else None)
+            if problem:
+                self._tested_files.pop(filename, None)
+                errors.append(f"{filename}: {problem}")
+            else:
+                self._tested_files[filename] = turn
+        return errors
 
     def _submit(self, turn: int, mode: str) -> str:
         names = self.task.transform_artifacts

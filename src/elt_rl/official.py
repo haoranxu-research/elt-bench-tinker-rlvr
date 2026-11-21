@@ -297,6 +297,36 @@ class SnowflakeBooksBackend:
     def _lookup_rows(self, query: str):
         return self._run_sql([query])
 
+    def source_labels(self, materialized: dict[str, list[str]]) -> dict:
+        fields = {"book_language": ("language_code", "language_name"), "shipping_method": ("method_name",)}
+        return {table: self._lookup_rows(
+            f"SELECT DISTINCT {', '.join(columns)} FROM {self.database}.BOOKS.{table} ORDER BY 1 LIMIT 30"
+        ) for table, columns in fields.items() if set(columns) <= set(materialized.get(table, ()))}
+
+    def output_shape(self, model: str, expected: tuple[str, ...]) -> str | None:
+        catalog = self.columns()
+        fields = set(catalog.get(model, ()))
+        missing = set(expected) - fields
+        extra = fields - set(expected)
+        if missing or extra:
+            return f"columns missing {sorted(missing)}, unexpected {sorted(extra)}"
+        source = model.removesuffix("s")
+        key = expected[0]
+        if key not in catalog.get(source, ()):
+            return None
+        name = f"{self.database}.BOOKS."
+        rows, distinct_ids, source_rows, missing_ids = self._lookup_rows(
+            f"SELECT COUNT(*), COUNT(DISTINCT {key}), "
+            f"(SELECT COUNT(*) FROM {name}{source}), "
+            f"(SELECT COUNT(*) FROM {name}{source} s WHERE NOT EXISTS "
+            f"(SELECT 1 FROM {name}{model} o WHERE o.{key} = s.{key})) FROM {name}{model}"
+        )[0]
+        if rows == distinct_ids == source_rows and missing_ids == 0:
+            return None
+        return (f"expected one row per source {key}. Output has {rows} rows and {distinct_ids} distinct IDs "
+                f"against {source_rows} source rows, with {missing_ids} source IDs missing. "
+                "Check the grain of each CTE and join.")
+
     def _clear(self) -> None:
         if self.airbyte:
             self.airbyte.cleanup()
@@ -490,4 +520,6 @@ def books_task_definition(checkout, public, open_backend, verify) -> TaskDefinit
         "books", instructions, ("load.json",), tuple(f"{name}.sql" for name in MODELS),
         open_backend, verify, _source_sections(checkout, public), partial_transforms=True,
         load_streams=available,
+        output_columns={model["name"] + ".sql": tuple(col["name"].strip().lower() for col in model["columns"])
+                        for model in _read_yaml(checkout / "elt-bench/snowflake/books/data_model.yaml")["models"]},
     )

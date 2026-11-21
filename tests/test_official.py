@@ -330,6 +330,17 @@ def test_lookup_values_are_scoped_and_escape_the_filter():
     assert len(queries) == 1
 
 
+def test_books_output_shape_checks_public_columns_and_source_ids():
+    backend = object.__new__(official.SnowflakeBooksBackend)
+    backend.database = "ELT_SESSION"
+    backend.columns = lambda: {"authors": ["author_id", "author_name"], "author": ["author_id"]}
+    backend._lookup_rows = lambda query: [(17753, 9235, 9235, 0)]
+    assert "17753 rows and 9235 distinct IDs" in backend.output_shape("authors", ("author_id", "author_name"))
+    assert "missing ['first_book']" in backend.output_shape("authors", ("author_id", "author_name", "first_book"))
+    backend._lookup_rows = lambda query: [(9235, 9235, 9235, 0)]
+    assert backend.output_shape("authors", ("author_id", "author_name")) is None
+
+
 def test_books_accepts_boolean_join_and_filter_conditions():
     sql = safe_select(
         "SELECT c.id FROM customer c LEFT JOIN address a ON c.id = a.id AND a.active = 1 "
@@ -759,7 +770,11 @@ def test_official_episode_calls_two_isolated_warehouse_replays(checkout, tmp_pat
 
         def fetchall(self):
             if ".INFORMATION_SCHEMA.COLUMNS " in statements[-1]:
-                return [("AUTHOR", "AUTHOR_ID"), ("AUTHOR", "AUTHOR_NAME"), ("PRIVATE_TABLE", "SECRET")]
+                return [("AUTHOR", "AUTHOR_ID"), ("AUTHOR", "AUTHOR_NAME"), ("PRIVATE_TABLE", "SECRET"),
+                        *((filename.removesuffix(".sql").upper(), col.upper())
+                          for filename, cols in task.output_columns.items() for col in cols)]
+            if statements[-1].startswith("SELECT COUNT(*), COUNT(DISTINCT"):
+                return [(7, 7, 7, 0)]
             return [("AUTHOR", 7)]
 
     def provision(run, main_tf, plan, username, password):

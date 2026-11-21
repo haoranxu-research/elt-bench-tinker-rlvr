@@ -81,3 +81,4 @@ class TaskDefinition:
     sections: Mapping[str, str] = field(default_factory=dict)
     partial_transforms: bool = False
     load_streams: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
+    output_columns: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
