@@ -49,6 +49,9 @@ BOOKS_TOOLS = {
     **TOOLS,
     "inspect_warehouse": ToolSpec("Show actual materialized tables and columns. Pass table for one table.",
                                    optional=("table",)),
+    "inspect_values": ToolSpec("Read distinct values from a source lookup column. Supported tables: "
+                               "book_language, shipping_method, country. Optionally filter by substring.",
+                               ("table", "column"), ("contains",)),
     "read_pipeline_file": ToolSpec("Read saved SQL. Use the next offset from the response for a long file.",
                                    ("path",), ("offset",)),
     "execute_pipeline": ToolSpec(
@@ -73,6 +76,9 @@ BOOKS_INSTRUCTION = (
     "wait for a successful save receipt, then execute_pipeline with stage=load. "
     "Use bare filenames. Inspect actual warehouse columns and read the relevant model and relationship sections before writing SQL. "
     "Start with one short independent transformation and get it tested. Check each join key against the schema. "
+    "Inspect source values before filtering coded labels. Keep undefined rates NULL unless the task says to fill them. "
+    "Keep the numeric precision unless rounding is requested. For one row per entity, aggregate each measure at its "
+    "own grain before joining, and use a ROW_NUMBER CTE for a ranked row rather than correlated ORDER BY/LIMIT. "
     "For each model, use write_pipeline_file(path, content) to save the full SQL query, then test just "
     "that file with execute_pipeline(stage=transform, file=filename). Rewrite the named file when it fails. "
     "Only write_pipeline_file accepts SQL text. Follow the remaining budget and tested files in tool feedback. "
@@ -230,6 +236,7 @@ class ELTEpisodeState:
             "write_pipeline_file": self._write,
             "execute_pipeline": lambda stage, file=None: self._execute(stage, turn, file),
             "inspect_warehouse": self._inspect_warehouse,
+            "inspect_values": self._inspect_values,
             "read_pipeline_file": self._read_pipeline_file,
             "submit_pipeline": lambda mode="complete": self._submit(turn, mode),
         }
@@ -286,6 +293,12 @@ class ELTEpisodeState:
 
     def catalog_text(self) -> str:
         return "\n".join(f"{name}({', '.join(columns)})" for name, columns in self.warehouse_columns.items())
+
+    def _inspect_values(self, table: str, column: str, contains: str = "") -> str:
+        if not self._loaded or not hasattr(self.backend, "lookup_values"):
+            raise PipelineError("load the source tables before inspecting lookup values")
+        values = self.backend.lookup_values(table, column, contains)
+        return f"{table}.{column} distinct source values (up to 30): " + json.dumps(values, ensure_ascii=False)
 
     def _read_pipeline_file(self, path: str, offset: str = "0") -> str:
         if path not in self._allowed or not offset.isdecimal() or len(offset) > 6:

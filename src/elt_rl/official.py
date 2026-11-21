@@ -279,6 +279,24 @@ class SnowflakeBooksBackend:
                 tables.setdefault(table.lower(), []).append(column.lower())
         return tables
 
+    def lookup_values(self, table: str, column: str, contains: str) -> list:
+        lookup_columns = {
+            "book_language": {"language_id", "language_code", "language_name"},
+            "shipping_method": {"method_id", "method_name"},
+            "country": {"country_id", "country_name"},
+        }
+        if column not in lookup_columns.get(table, ()):
+            raise PipelineError("use a column from book_language, shipping_method, or country")
+        if contains and not re.fullmatch(r"[a-zA-Z0-9 .'-]{1,48}", contains):
+            raise PipelineError("use up to 48 letters, digits, spaces, or simple punctuation in contains")
+        literal = contains.lower().replace("'", "''")
+        predicate = f"WHERE LOWER(CAST({column} AS VARCHAR)) LIKE '%{literal}%'" if literal else ""
+        query = f"SELECT DISTINCT {column} FROM {self.database}.BOOKS.{table} {predicate} ORDER BY 1 LIMIT 30"
+        return [row[0] for row in self._lookup_rows(query)]
+
+    def _lookup_rows(self, query: str):
+        return self._run_sql([query])
+
     def _clear(self) -> None:
         if self.airbyte:
             self.airbyte.cleanup()

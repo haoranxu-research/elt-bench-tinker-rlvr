@@ -61,6 +61,10 @@ def safe_select(sql: str, raw_tables: frozenset[str]) -> str:
         # Fold unquoted aliases for Snowflake scope checks while preserving the generated SQL.
         scoped_query = normalize_identifiers(query.copy(), dialect="snowflake")
         for scope in traverse_scope(scoped_query):
+            if (scope.is_subquery and scope.expression.args.get("limit")
+                    and any(column.table for column in scope.external_columns)):
+                raise PipelineError("Snowflake does not support LIMIT in a correlated subquery. "
+                                    "Use a ranked CTE and join its first row instead.")
             for _, source in scope.selected_sources.values():
                 if isinstance(source, exp.Table):
                     if source.name.lower() not in raw_tables:

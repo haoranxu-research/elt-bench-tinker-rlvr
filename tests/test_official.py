@@ -306,6 +306,30 @@ def test_snowflake_sql_accepts_join_aggregation_and_windows():
     assert "ROW_NUMBER()" in sql
 
 
+def test_snowflake_rejects_correlated_limit_but_accepts_independent_limit():
+    tables = frozenset({"book", "publisher"})
+    with pytest.raises(PipelineError, match="LIMIT in a correlated subquery"):
+        safe_select("SELECT p.publisher_id, (SELECT b.title FROM book b "
+                    "WHERE b.publisher_id = p.publisher_id ORDER BY b.title LIMIT 1) "
+                    "FROM publisher p", tables)
+    assert "LIMIT 1" in safe_select("SELECT (SELECT title FROM book ORDER BY title LIMIT 1) FROM publisher", tables)
+
+
+def test_lookup_values_are_scoped_and_escape_the_filter():
+    backend = object.__new__(official.SnowflakeBooksBackend)
+    backend.database = "ELT_SESSION"
+    queries = []
+    backend._lookup_rows = lambda query: queries.append(query) or [("observed",)]
+    assert backend.lookup_values("book_language", "language_name", "x' OR") == ["observed"]
+    assert "ELT_SESSION.BOOKS.book_language" in queries[0]
+    assert "'%x'' or%'" in queries[0] and queries[0].endswith("LIMIT 30")
+    with pytest.raises(PipelineError, match="use a column"):
+        backend.lookup_values("customer", "email", "")
+    with pytest.raises(PipelineError, match="use up to"):
+        backend.lookup_values("country", "country_name", "%;")
+    assert len(queries) == 1
+
+
 def test_books_accepts_boolean_join_and_filter_conditions():
     sql = safe_select(
         "SELECT c.id FROM customer c LEFT JOIN address a ON c.id = a.id AND a.active = 1 "

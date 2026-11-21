@@ -23,8 +23,8 @@ from elt_rl.rendering import make_renderer
 from elt_rl.settings import DEFAULT_RENDERER, ConfigurationError, read_settings
 
 
-HOSTED_BUDGET = TokenBudget(context=12_288, sampled=8_192)
-HOSTED_TURNS = 24
+HOSTED_BUDGET = TokenBudget(context=16_384, sampled=12_288)
+HOSTED_TURNS = 32
 
 
 class LocalBooksBackend(SnowflakeBooksBackend):
@@ -74,6 +74,9 @@ class LocalBooksBackend(SnowflakeBooksBackend):
             "SELECT table_name, column_name FROM information_schema.columns "
             "WHERE lower(table_schema) = 'books' ORDER BY table_name, ordinal_position",
         ).fetchall())
+
+    def _lookup_rows(self, query: str):
+        return self.connection.execute(query).fetchall()
 
     def close(self):
         self.connection.close()
@@ -276,7 +279,7 @@ if __name__ == "__main__":
     parser.add_argument("--hosted", action="store_true", help="Use Tinker sampling and local DuckDB")
     parser.add_argument("--preflight-only", action="store_true", help="Check hosted prerequisites without creating a session")
     parser.add_argument("--allow-paid", action="store_true", help="Confirm authorization for one hosted rehearsal")
-    parser.add_argument("--budget-usd", type=float, default=0.10)
+    parser.add_argument("--budget-usd", type=float, default=0.17)
     parser.add_argument("--env-file", type=Path, default=Path(".env"))
     args = parser.parse_args()
     if args.hosted:
