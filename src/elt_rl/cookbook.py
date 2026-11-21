@@ -5,8 +5,9 @@ import json
 import logging
 import shutil
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
+from time import monotonic
 
 from tinker_cookbook.completers import TokenCompleter
 from tinker_cookbook.renderers.base import Message, RenderContext, Renderer, ToolCall, ToolSpec
@@ -50,14 +51,20 @@ class EpisodeTool:
             with self.trace_file.open("a", encoding="utf-8") as stream:
                 stream.write(json.dumps({"turn": turn, "tool": self.name, "call_id": input.call_id,
                                          "arguments": input.arguments, "feedback": feedback.text,
-                                         "submitted": feedback.submitted}) + "\n")
+                                         "submitted": feedback.submitted, "accepted": feedback.accepted}) + "\n")
         return feedback
 
     async def run(self, input: ToolInput) -> ToolResult:
-        # Keep the receipt with the dispatched operation if the caller times out.
-        feedback = await asyncio.to_thread(self._dispatch_with_receipt, input, self.turn())
+        if self.episode.config.defer_grading and (
+            self.name == "submit_pipeline" or self.episode.accepted_submission is not None
+        ):
+            # Acceptance uses only local artifacts. Record it in the current action.
+            feedback = self._dispatch_with_receipt(input, self.turn())
+        else:
+            feedback = await asyncio.to_thread(self._dispatch_with_receipt, input, self.turn())
         return simple_tool_result(
-            feedback.text, call_id=input.call_id or "", name=self.name, should_stop=feedback.submitted,
+            feedback.text, call_id=input.call_id or "", name=self.name,
+            should_stop=feedback.submitted or feedback.accepted,
         )
 
 
@@ -141,6 +148,10 @@ class ELTMessageEnv(AgentToolMessageEnv):
                 skipped = len(calls) - working_calls
                 message = {**message, "tool_calls": calls[:working_calls]}
         result = await super().step(message)
+        if self._episode.accepted_submission is not None:
+            result.metrics["submission_accepted"] = 1
+            self.finished = True
+            return result
         if skipped:
             result.logs["tool_calls_skipped_for_submission"] = skipped
         if self._episode.finalizing and not result.episode_done:
@@ -222,6 +233,8 @@ class BooksTokenEnv(ELTTokenEnv):
         self.turns_used = 0
 
     async def _render_in_thread(self, messages: list[Message], **kwargs):
+        if self.episode.accepted_submission is not None:
+            return types.Observation.empty()
         if self.pending_recovery_action is not None:
             if self.episode.recovery_action() == self.pending_recovery_action:
                 return await asyncio.to_thread(self.final_renderer.build_generation_prompt, messages, **kwargs)
@@ -315,7 +328,27 @@ class BooksRollout(RolloutStrategy):
         async def capped_policy(observation, stop, *, max_tokens=None):
             return await env.sample(policy, observation, stop, max_tokens)
 
+        episode = env.episode
+        if episode.config.defer_grading:
+            episode.action_deadline = monotonic() + episode.config.rollout_seconds
         trajectory = await run_rollout(capped_policy, env)
+        if trajectory.transitions and trajectory.transitions[-1].metrics.get("submission_accepted"):
+            last = trajectory.transitions[-1]
+            if not last.episode_done or not last.ac.tokens:
+                raise RuntimeError("accepted submission is missing its sampled terminal action")
+            worker = asyncio.create_task(asyncio.to_thread(episode.finish_submission))
+            try:
+                grade = await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                # Drain the bounded replay before the group destroys its workspace.
+                await worker
+                raise
+            trajectory.transitions[-1] = replace(
+                last, reward=grade.reward,
+                metrics={**last.metrics, **grade.metrics(),
+                         f"grading/{episode.grading_status}": 1,
+                         "grading/cleanup_required": int(episode.grading_cleanup_required)},
+            )
         return RolloutResult([trajectory], [env], [])
 
 
@@ -328,6 +361,10 @@ class ELTGroupBuilder(EnvGroupBuilder):
                  submission_reserve: int = 0):
         if group_size < 1:
             raise ValueError("group_size must be positive")
+        if config.defer_grading and not submission_reserve:
+            raise ValueError("deferred grading requires the Books submission strategy")
+        if config.grading_seconds is not None and not config.defer_grading:
+            raise ValueError("separate grading time requires deferred grading")
         self.config = config
         self.renderer = renderer
         self.group_size = group_size
@@ -384,9 +421,12 @@ class ELTGroupBuilder(EnvGroupBuilder):
                                             self.evidence_dir / episode.workspace.name)
                     if episode.task.partial_transforms:
                         metadata = self.evidence_dir / f"{episode.workspace.name}.submission.json"
+                        result = {"submitted": submitted, "transforms": episode.submitted_files}
+                        if episode.config.defer_grading:
+                            result.update(accepted=episode.accepted_submission is not None,
+                                          grading_status=episode.grading_status)
                         await asyncio.to_thread(metadata.write_text,
-                                                json.dumps({"submitted": submitted,
-                                                            "transforms": episode.submitted_files}), encoding="utf-8")
+                                                json.dumps(result), encoding="utf-8")
                         if submitted:
                             final_grade = episode.grade()
                             grade_path = self.evidence_dir / f"{episode.workspace.name}.grade.json"

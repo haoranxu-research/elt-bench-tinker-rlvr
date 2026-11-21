@@ -34,9 +34,10 @@ class LocalBooksBackend(SnowflakeBooksBackend):
 
     transform_attempt_limit = 10
 
-    def __init__(self, bundle, assets):
+    def __init__(self, bundle, assets, *, book_publication_date_text=False):
         self.bundle = bundle
         self.assets = assets
+        self.book_publication_date_text = book_publication_date_text
         self.raw_tables = frozenset(name for group in streams(bundle).values() for name in group)
         self.database = "memory"
         self.connection = duckdb.connect()
@@ -46,7 +47,8 @@ class LocalBooksBackend(SnowflakeBooksBackend):
     def _load(self, selected):
         self.connection.execute("SET schema = 'main'")
         self.connection.execute("DROP SCHEMA IF EXISTS books CASCADE")
-        load_local_inputs(self.connection, self.assets, (name for group in selected.values() for name in group))
+        load_local_inputs(self.connection, self.assets, (name for group in selected.values() for name in group),
+                          book_publication_date_text=self.book_publication_date_text)
 
     def execute(self, stage, artifacts):
         result = super().execute(stage, artifacts)
@@ -200,13 +202,15 @@ async def run_hosted(args, task, bundle, assets, expected, evaluator_calls):
     for name, digest in REFERENCE_HASHES.items():
         if sha256(assets / "gt_snowflake" / "books" / f"{name}.csv") != digest:
             raise ConfigurationError("local rehearsal reference does not match the pinned dataset")
-    with LocalBooksBackend(bundle, assets).connection as connection:
-        load_local_inputs(connection, assets, expected)
+    with duckdb.connect() as connection:
+        load_local_inputs(connection, assets, expected,
+                          book_publication_date_text=args.book_publication_date_text)
         for table, count in expected.items():
             if connection.execute(f'SELECT COUNT(*) FROM books."{table}"').fetchone()[0] != count:
                 raise ConfigurationError(f"staged rehearsal row count does not match for {table}")
 
-    manifest = {"mode": "books-rehearsal", "warehouse": "duckdb_transport", "staged_rows": sum(expected.values())}
+    manifest = {"mode": "books-rehearsal", "warehouse": "duckdb_transport", "staged_rows": sum(expected.values()),
+                "book_publication_date_text": args.book_publication_date_text}
 
     def record(**updates):
         manifest.update(updates, updated_utc=datetime.now(timezone.utc).isoformat())
@@ -250,7 +254,7 @@ async def run(args):
         return grade
 
     def open_backend(_path, _config):
-        return LocalBooksBackend(bundle, assets)
+        return LocalBooksBackend(bundle, assets, book_publication_date_text=args.book_publication_date_text)
 
     args.out.mkdir(parents=True)
     pipelines = args.out / "pipelines"
@@ -275,7 +279,8 @@ async def run(args):
             "kind": "model_authored_local_rehearsal", "local_model": args.local_model,
             "protocol": "ollama_native_tools" if args.native_tools else "pinned_cookbook_tokens",
             "renderer_model": None if args.native_tools else args.model,
-            "warehouse": "duckdb_transport", "turns": turns, "sampled_tokens": sampled, "stop_reason": reason,
+            "warehouse": "duckdb_transport", "book_publication_date_text": args.book_publication_date_text,
+            "turns": turns, "sampled_tokens": sampled, "stop_reason": reason,
             "elapsed_seconds": round(monotonic() - started, 2), "submitted": grade.submitted,
             "submitted_files": episode.submitted_files, "evaluator_calls": evaluator_calls, **result_fields(grade),
         })
@@ -295,6 +300,8 @@ if __name__ == "__main__":
     parser.add_argument("--native-tools", action="store_true", help="Use Ollama tool rendering with the same dispatcher")
     parser.add_argument("--port", type=int, default=11435)
     parser.add_argument("--hosted", action="store_true", help="Use Tinker sampling and local DuckDB")
+    parser.add_argument("--book-publication-date-text", action="store_true",
+                        help="Mirror Airbyte's observed Snowflake TEXT type for book.publication_date")
     parser.add_argument("--preflight-only", action="store_true", help="Check hosted prerequisites without creating a session")
     parser.add_argument("--allow-paid", action="store_true", help="Confirm authorization for one hosted rehearsal")
     parser.add_argument("--budget-usd", type=float, default=0.17)

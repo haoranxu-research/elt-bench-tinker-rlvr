@@ -23,6 +23,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--allow-warehouse", action="store_true", help="Confirm authorized Snowflake and Airbyte usage")
     parser.add_argument("--preflight-only", action="store_true", help="Check configuration and Tinker metadata without a session")
     parser.add_argument("--rollout-seconds", type=int, help="Official rollout wall-clock limit, up to 3600 seconds")
+    parser.add_argument("--grading-seconds", type=int,
+                        help="Separate host grading limit after timely Books submission (opt-in)")
     parser.add_argument("--books-35b-profile", action="store_true",
                         help="Use the context, turn, and tool limits of the full-score local Books rehearsal")
     parser.add_argument("--budget-usd", type=float, required=True, help="Maximum estimated Tinker token cost")
@@ -38,6 +40,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("explicit --allow-paid is required, plus --allow-warehouse for official-rollout")
     if args.rollout_seconds is not None and (not official or not 1 <= args.rollout_seconds <= 3600):
         parser.error("--rollout-seconds is only for official-rollout and must be between 1 and 3600")
+    if args.grading_seconds is not None and (not official or not 1 <= args.grading_seconds <= 3600):
+        parser.error("--grading-seconds is only for official-rollout and must be between 1 and 3600")
     if not math.isfinite(args.budget_usd) or args.budget_usd <= 0:
         parser.error("--budget-usd must be finite and positive")
     try:
@@ -85,9 +89,10 @@ def main(argv: list[str] | None = None) -> int:
                 Path(work_root), max_turns=32 if args.books_35b_profile else (24 if official else PILOT_TURNS),
                 max_tool_calls=48 if args.books_35b_profile else 32,
                 execution_seconds=60 if official else 1,
-                # A full six-connection load precedes submission, which repeats it in isolation.
                 rollout_seconds=(args.rollout_seconds or 3600) if official else 120,
                 max_submissions=1 if official else 2,
+                defer_grading=official,
+                grading_seconds=args.grading_seconds,
             )
             (out / "pipelines").mkdir(mode=0o700)
             return asyncio.run(run_remote(

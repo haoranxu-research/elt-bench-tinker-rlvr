@@ -264,6 +264,7 @@ async def run_remote(
            lora_rank=LORA_RANK if train else None, loss=LOSS if train else None,
            token_budget=asdict(budget), members=members, max_turns=config.max_turns,
            max_tool_calls=config.max_tool_calls, rollout_seconds=config.rollout_seconds,
+           defer_grading=config.defer_grading, grading_seconds=config.grading_seconds,
            token_prices=asdict(prices), estimated_upper_usd=estimate,
            spending_limit_usd=max_usd, actual_spend_usd=None, balance_pre=None, balance_post=None)
     renderer = make_renderer(model, renderer_name, offline=True)
@@ -324,15 +325,31 @@ async def run_remote(
         if not train:
             submitted = any(turn["metrics"].get("submitted", 0) for item in evidence for turn in item["turns"])
             host_grades = sorted((out / "pipelines").glob("*.grade.json"))
+            metrics = evidence[0]["turns"][-1]["metrics"] if evidence and evidence[0]["turns"] else {}
+            record(submission_accepted=bool(metrics.get("submission_accepted", submitted)))
             if host_grades:
-                record(warehouse_grade=json.loads(host_grades[0].read_bytes()))
+                warehouse_grade = json.loads(host_grades[0].read_bytes())
+                record(warehouse_grade=warehouse_grade)
+                if config.defer_grading and (
+                    len(host_grades) != 1 or not submitted or warehouse_grade["reward"] != evidence[0]["reward"]
+                ):
+                    record(status="rollout_grade_mismatch", submitted=submitted)
+                    return 2
+            elif config.defer_grading and submitted:
+                record(status="rollout_grade_receipt_missing", submitted=True)
+                return 2
             if any((out / "official").glob("*/cleanup-required.txt")):
                 record(status="cleanup_required", submitted=submitted or bool(host_grades))
                 return 2
             if host_grades and not submitted:
                 record(status="warehouse_submission_outside_trajectory", submitted=True)
                 return 2
-            record(status="rollout_submitted" if submitted else "rollout_unsubmitted", submitted=submitted)
+            status = "rollout_submitted" if submitted else "rollout_unsubmitted"
+            if metrics.get("grading/timed_out"):
+                status = "rollout_grading_timed_out"
+            elif metrics.get("grading/failed"):
+                status = "rollout_grading_failed"
+            record(status=status, submitted=submitted)
             return 0 if submitted else 2
         record(training_datum_count=len(datums), planned_training_input_tokens=usage.trained,
                **alignment_evidence(datums))

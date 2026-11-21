@@ -233,6 +233,87 @@ def test_books_submission_reserve_keeps_one_explicit_action(tmp_path, boundary, 
         assert trajectory.transitions[-2].logs["tool_calls_skipped_for_submission"] == 1
 
 
+@pytest.mark.parametrize("outcome", ["completed", "timed_out", "shared_deadline", "late", "failed"])
+def test_books_grading_reconciles_only_an_on_time_sampled_submission(tmp_path, monkeypatch, outcome):
+    from time import sleep
+
+    from tinker_cookbook.completers import TokensWithLogprobs
+    from tinker_cookbook.rl.rollouts import do_group_rollout
+    from elt_rl.contracts import Grade, PipelineError
+    from elt_rl.cookbook import BooksRollout, submission_call_tokens
+    from elt_rl.training import datums_for_group
+
+    base = local_task()
+    grading_calls = []
+
+    def verify(backend):
+        grading_calls.append(backend)
+        if outcome == "failed":
+            raise PipelineError("injected evaluator error")
+        if outcome == "timed_out":
+            sleep(0.3)
+        if outcome in {"completed", "shared_deadline"}:
+            sleep(0.8)
+        return Grade(1, 1 / 3, stage2_ran=True, submitted=True)
+
+    task = replace(base, task_id="books", partial_transforms=True, verify=verify)
+    renderer = cast(Renderer, ScriptedRenderer())
+    submission = submission_call_tokens(renderer, "complete")
+    reserve = 2 * max(len(submission), len(submission_call_tokens(renderer, "partial")))
+    actions = [json.loads(line) for line in TRACE.read_text(encoding="utf-8").splitlines()]
+    batches = [list(json.dumps(batch).encode()) for batch in (actions[:3], [actions[3], actions[6], actions[7]])]
+    evidence = tmp_path / "evidence"
+    evidence.mkdir()
+    config = EpisodeConfig(tmp_path / "work", max_turns=3, max_tool_calls=12,
+                           rollout_seconds=0.7 if outcome in {"completed", "shared_deadline"} else 5,
+                           defer_grading=True,
+                           grading_seconds={"timed_out": 0.25, "shared_deadline": None}.get(outcome, 3))
+
+    async def rollout(builder, final):
+        responses = iter([*batches, final])
+
+        async def policy(_prompt, _stop, *, max_tokens):
+            action = next(responses)
+            assert len(action) <= max_tokens
+            if action is final and outcome == "late":
+                # Exercise acceptance at the exact wall-clock boundary without relying on scheduling.
+                monkeypatch.setattr("elt_rl.episode.monotonic", lambda: builder.episodes[0].action_deadline)
+            return TokensWithLogprobs(action, [-0.25] * len(action), stop_reason="stop", sequence_id="sample")
+
+        return await do_group_rollout(builder, policy, strategy=BooksRollout())
+
+    builder = ELTGroupBuilder(config, renderer, 1, task_factory=lambda: task, evidence_dir=evidence,
+                              submission_reserve=reserve)
+    group = asyncio.run(rollout(builder, submission))
+    last = group.trajectories_G[0].transitions[-1]
+    assert last.ac.tokens == submission
+    assert last.ac.logprobs == [-0.25] * len(submission)
+    assert last.ac.sequence_id == "sample"
+    assert last.episode_done
+    assert not list(config.work_root.iterdir())
+    assert len(grading_calls) == (outcome != "late")
+    if outcome == "late":
+        assert "agent action deadline expired" in last.logs["tool_result_0"]
+        assert not last.metrics.get("submission_accepted")
+    else:
+        status = "timed_out" if outcome == "shared_deadline" else outcome
+        assert last.metrics["submission_accepted"] == last.metrics[f"grading/{status}"] == 1
+    expected = Grade(1, 1 / 3, stage2_ran=True, submitted=True).reward if outcome == "completed" else 0
+    assert group.get_total_rewards() == [expected]
+    assert last.reward == expected
+    assert bool(list(evidence.glob("*.grade.json"))) == (outcome == "completed")
+
+    if outcome == "completed":
+        failed_builder = ELTGroupBuilder(config, renderer, 1, task_factory=lambda: task, submission_reserve=reserve)
+        failed = asyncio.run(rollout(failed_builder, list(b"[]")))
+        combined = replace(group, trajectories_G=[*group.trajectories_G, *failed.trajectories_G],
+                           final_rewards_G=[*group.final_rewards_G, *failed.final_rewards_G],
+                           metrics_G=[*group.metrics_G, *failed.metrics_G])
+        datums = datums_for_group(combined, require_provenance=True)
+        advantages = [value for datum in datums for value in datum.loss_fn_inputs["advantages"].data if value]
+        assert sorted(set(advantages)) == pytest.approx([-expected / 2, expected / 2])
+
+
 def test_books_interrupted_first_sql_resumes_from_loaded_state(tmp_path, monkeypatch):
     class RecoveryRenderer(ScriptedRenderer):
         def build_generation_prompt(self, messages):
@@ -324,6 +405,8 @@ def test_dispatched_tool_preserves_receipt_after_caller_cancellation(tmp_path):
     trace = tmp_path / "tools.jsonl"
 
     class Episode:
+        config = EpisodeConfig(tmp_path)
+
         def dispatch(self, *_args, **_kwargs):
             started.set()
             assert release.wait(2)

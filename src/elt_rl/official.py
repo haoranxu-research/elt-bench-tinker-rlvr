@@ -3,6 +3,7 @@
 import ast
 import csv
 import json
+import math
 import os
 import re
 import shutil
@@ -17,7 +18,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .airbyte import GROUPS, AirbyteRun, private_environment, select_streams, streams, terraform_plan
-from .contracts import EpisodeConfig, Grade, PartialTransformError, PipelineError, Stage, TaskDefinition, WarehouseBackend
+from .contracts import (EpisodeConfig, Grade, PartialTransformError, PipelineError, Stage, TaskDefinition,
+                        WarehouseBackend, grading_time_left)
 from .settings import OFFICIAL_NAMES, ConfigurationError
 
 BENCH_SHA = "3b068d5f15f64541d05fbc33a817e4b08c6bf173"
@@ -136,6 +138,7 @@ def _pack_grade(results_log: str, stage2: dict | None, raw_tables: frozenset[str
 
 class SnowflakeBooksBackend:
     transform_attempt_limit = MAX_TRANSFORM_ATTEMPTS
+    grading_deadline: float | None = None
 
     def __init__(self, directory: Path, episode: EpisodeConfig, config: OfficialConfig,
                  bundle: dict, credentials: dict, raw_tables: frozenset[str]):
@@ -156,13 +159,17 @@ class SnowflakeBooksBackend:
         self.report.mkdir(parents=True, mode=0o700)
 
     def _connection_options(self) -> dict:
+        timeout = math.ceil(grading_time_left(self.grading_deadline, self.query_timeout))
         return {
             **snowflake_connect_options(self.credentials),
-            "login_timeout": 15, "network_timeout": self.query_timeout,
-            "session_parameters": {"STATEMENT_TIMEOUT_IN_SECONDS": self.query_timeout,
-                                   "STATEMENT_QUEUED_TIMEOUT_IN_SECONDS": self.query_timeout,
+            "login_timeout": math.ceil(grading_time_left(self.grading_deadline, 15)), "network_timeout": timeout,
+            "session_parameters": {"STATEMENT_TIMEOUT_IN_SECONDS": timeout,
+                                   "STATEMENT_QUEUED_TIMEOUT_IN_SECONDS": timeout,
                                    "QUERY_TAG": self.database},
         }
+
+    def set_grading_deadline(self, deadline: float) -> None:
+        self.grading_deadline = deadline
 
     def _run_sql(self, statements: list[str], *, artifact_names: Mapping[int, str] | None = None):
         import snowflake.connector
@@ -173,7 +180,8 @@ class SnowflakeBooksBackend:
                 with closing(connection.cursor()) as cursor:
                     for index, statement in enumerate(statements):
                         artifact = artifact_names.get(index) if artifact_names else None
-                        cursor.execute(statement, timeout=self.query_timeout, num_statements=1)
+                        timeout = math.ceil(grading_time_left(self.grading_deadline, self.query_timeout))
+                        cursor.execute(statement, timeout=timeout, num_statements=1)
                         if artifact is not None:
                             tested_files.append(artifact)
                     artifact = None
@@ -187,7 +195,8 @@ class SnowflakeBooksBackend:
             if state in {"22000", "22007", "22018"} and isinstance(error.msg, str):
                 if re.search(r"Function\s+(EXTRACT|DATE_PART|YEAR)\s+does not support\s+(?:VARCHAR|TEXT)",
                              error.msg, re.IGNORECASE):
-                    detail = ": a date-part function received text. Check the actual column type and parse the date first."
+                    detail = (": a date-part function received text. Check the actual column type and parse the date first. "
+                              "Use TRY_TO_DATE with the observed format when the input can be invalid.")
                 elif re.search(r"(?:Date|Timestamp) '[^'\r\n]+' is not recognized", error.msg, re.IGNORECASE):
                     detail = ": a date or timestamp conversion failed. Check the input format."
             if state.startswith("42") and isinstance(error.msg, str):
@@ -239,7 +248,7 @@ class SnowflakeBooksBackend:
             *(f"CREATE OR REPLACE TABLE {self.database}.BOOKS.{name} AS {sql}"
               for name, sql in models.items()),
         ], artifact_names={index: f"{name}.sql" for index, name in enumerate(models, start=2)})
-        return "Snowflake transform finished. " + self.inspect()
+        return "Snowflake transform finished."
 
     def _load(self, selected: dict[str, list[str]]) -> None:
         if self.create_uncertain:
@@ -254,6 +263,7 @@ class SnowflakeBooksBackend:
         self.created = True
         self._run_sql([f"CREATE SCHEMA {self.database}.BOOKS"])
         self.airbyte = AirbyteRun(prefix, self.config.terraform, self.config.airbyte_url, self.config.service_timeout)
+        self.airbyte.grading_deadline = self.grading_deadline
         try:
             airbyte_auth = self.bundle["Airbyte"]["config"]
             self.airbyte.provision(self.config.checkout / "setup" / "main.tf", plan,
@@ -432,14 +442,17 @@ class SnowflakeBooksBackend:
         return None
 
     def _clear(self) -> None:
-        if self.airbyte:
-            self.airbyte.cleanup()
-            self.airbyte = None
-        if self.created:
-            self._run_sql([f"DROP DATABASE IF EXISTS {self.database}"])
-            self.created = False
+        try:
+            if self.airbyte:
+                self.airbyte.cleanup()
+                self.airbyte = None
+        finally:
+            if self.created:
+                self._run_sql([f"DROP DATABASE IF EXISTS {self.database}"])
+                self.created = False
 
     def close(self) -> None:
+        self.grading_deadline = None
         try:
             self._clear()
             if self.create_uncertain:
@@ -468,12 +481,14 @@ class SnowflakeBooksBackend:
                 sys.executable, "eva.py", "--folder", "graded", "--db-type", "snowflake",
                 "--database", self.database, "--only", "books", "--credential", str(credential.resolve()),
                 "--gt-folder", str(self.config.ground_truth),
-            ], cwd=cwd, env=private_environment(), timeout=self.config.service_timeout,
+            ], cwd=cwd, env=private_environment(),
+                timeout=grading_time_left(self.grading_deadline, self.config.service_timeout),
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
         except (OSError, subprocess.SubprocessError):
             raise PipelineError("official evaluator failed or timed out") from None
         finally:
             credential.unlink(missing_ok=True)
+        grading_time_left(self.grading_deadline, self.config.service_timeout)
         files = cwd / "agent_results" / "graded"
         try:
             stage1 = (files / "results.log").read_text(encoding="utf-8")

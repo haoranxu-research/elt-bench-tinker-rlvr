@@ -54,7 +54,7 @@ def save_result(out, report):
     print(encoded)
 
 
-def load_local_inputs(connection, assets, tables):
+def load_local_inputs(connection, assets, tables, *, book_publication_date_text=False):
     connection.execute('CREATE SCHEMA "BOOKS"')
     for table in tables:
         if table == "address_status":
@@ -62,7 +62,10 @@ def load_local_inputs(connection, assets, tables):
         else:
             path = next(path for folder in ("flat-files", "data-api/data/books", "data-db/data/books")
                         if (path := assets / folder / f"{table}.csv").is_file())
-            source = connection.read_csv(str(path), header=True)
+            # Airbyte delivered this CSV field as TEXT to Snowflake. Override
+            # inference at ingestion so the original strings survive unaltered.
+            options = {"dtype": {"publication_date": "VARCHAR"}} if table == "book" and book_publication_date_text else {}
+            source = connection.read_csv(str(path), header=True, **options)
         source.create(f"books.{table}")
     connection.execute("SET schema = 'BOOKS'")
 

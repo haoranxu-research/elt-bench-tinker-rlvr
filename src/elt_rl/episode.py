@@ -4,8 +4,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory, mkdtemp
 from threading import RLock
+from time import monotonic
 
-from .contracts import EpisodeConfig, Grade, PartialTransformError, PipelineError, TaskDefinition
+from .contracts import (EpisodeConfig, Grade, GradingTimeout, PartialTransformError, PipelineError,
+                        TaskDefinition, grading_time_left)
 
 
 @dataclass(frozen=True)
@@ -108,6 +110,13 @@ BOOKS_REQUEST = "Complete the ELT task using the tools. Your first action is rea
 class Feedback:
     text: str
     submitted: bool = False
+    accepted: bool = False
+
+
+@dataclass(frozen=True)
+class AcceptedSubmission:
+    load: tuple[tuple[str, str], ...]
+    sql: tuple[tuple[str, str], ...]
 
 
 class ELTEpisodeState:
@@ -139,6 +148,10 @@ class ELTEpisodeState:
         self._calls = 0
         self._submission_attempts = 0
         self._grade: Grade | None = None
+        self.action_deadline: float | None = None
+        self.accepted_submission: AcceptedSubmission | None = None
+        self.grading_status: str | None = None
+        self.grading_cleanup_required = False
         self.submitted_files: tuple[str, ...] = ()
         self.finalizing = False
         self.sampled_tokens_left: tuple[int, int] | None = None
@@ -172,7 +185,7 @@ class ELTEpisodeState:
 
     def dispatch(self, name: str, arguments: object, *, turn: int) -> Feedback:
         with self._lock:
-            if self._closed or self._grade is not None:
+            if self._closed or self._grade is not None or self.accepted_submission is not None:
                 return Feedback("ERROR: episode already ended")
             if not self._last_turn <= turn <= self.config.max_turns or turn < 1:
                 return Feedback("ERROR: invalid turn or turn limit reached")
@@ -191,6 +204,8 @@ class ELTEpisodeState:
             except PipelineError as exc:
                 value = f"ERROR: {exc}"
                 self.latest_error = value[:1100]
+            if self.accepted_submission is not None:
+                return Feedback(value, accepted=True)
             if self.task.partial_transforms and self._grade is None:
                 budget = "\n" + self._submission_status(turn)
                 room = max(0, self.config.max_output_chars - len(budget))
@@ -565,23 +580,73 @@ class ELTEpisodeState:
             raise PipelineError("successfully execute current artifacts in an earlier turn before submitting")
         if self._submission_attempts >= self.config.max_submissions:
             raise PipelineError("submission replay limit reached")
+        submission = AcceptedSubmission(tuple(self._read(self.task.load_artifacts).items()),
+                                        tuple(self._read(names).items()))
+        if self.config.defer_grading:
+            if self.action_deadline is None or monotonic() >= self.action_deadline:
+                raise PipelineError("agent action deadline expired before submission acceptance")
+            self.accepted_submission = submission
+            return "pipeline accepted. The host will replay the submitted files and grade them."
         self._submission_attempts += 1
         self._tested_turn = None
         self._tested_files.clear()
-        replay_path = Path(mkdtemp(prefix="submission-", dir=self.workspace))
-        replay = self.task.open_backend(replay_path, self.config)
-        try:
-            replay.execute("load", self._read(self.task.load_artifacts))
-            replay.execute("transform", self._read(names))
-            grade = self.task.verify(replay)
-        finally:
-            replay.close()
-        if not grade.submitted:
-            raise PipelineError("the verifier did not accept this replay")
-        self.submitted_files = names
-        self._grade = grade
+        self._record_grade(submission, self._replay(submission))
+        grade = self.grade()
         if not self.task.partial_transforms:
             return "pipeline submitted and graded"
         stage2 = f"{grade.stage2:.6g}" if grade.stage2_ran else "skipped"
         return (f"pipeline submitted and graded. Stage 1: {grade.stage1:.6g}. "
                 f"Stage 2: {stage2}. Reward: {grade.reward:.6g}.")
+
+    def _record_grade(self, submission: AcceptedSubmission, grade: Grade) -> None:
+        if not grade.submitted:
+            raise PipelineError("the verifier did not accept this replay")
+        self.submitted_files = tuple(name for name, _ in submission.sql)
+        self._grade = grade
+
+    def finish_submission(self) -> Grade:
+        """Grade the frozen submission once, after the last sampled action is recorded."""
+        with self._lock:
+            submission = self.accepted_submission
+            if submission is None or self.grading_status is not None:
+                return self.grade()
+            assert self.action_deadline is not None
+            deadline = (monotonic() + self.config.grading_seconds
+                        if self.config.grading_seconds is not None else self.action_deadline)
+            try:
+                grading_time_left(deadline, float("inf"))
+                self._record_grade(submission, self._replay(submission, deadline))
+            except GradingTimeout:
+                self.grading_status = "timed_out"
+            except PipelineError:
+                self.grading_status = "failed"
+            else:
+                self.grading_status = "completed"
+            return self.grade()
+
+    def _replay(self, submission: AcceptedSubmission, deadline: float | None = None) -> Grade:
+        replay_path = Path(mkdtemp(prefix="submission-", dir=self.workspace))
+        replay = self.task.open_backend(replay_path, self.config)
+        try:
+            if deadline is not None and hasattr(replay, "set_grading_deadline"):
+                replay.set_grading_deadline(deadline)
+            grading_time_left(deadline, float("inf"))
+            replay.execute("load", dict(submission.load))
+            grading_time_left(deadline, float("inf"))
+            replay.execute("transform", dict(submission.sql))
+            grading_time_left(deadline, float("inf"))
+            grade = self.task.verify(replay)
+            grading_time_left(deadline, float("inf"))
+        except PipelineError:
+            grading_time_left(deadline, float("inf"))
+            raise
+        finally:
+            try:
+                replay.close()
+            except PipelineError:
+                if deadline is None:
+                    raise
+                # Snowflake retains an operator recovery report. Cleanup does
+                # not change a completed evaluation or mask a grading error.
+                self.grading_cleanup_required = True
+        return grade

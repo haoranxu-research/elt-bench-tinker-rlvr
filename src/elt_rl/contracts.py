@@ -1,6 +1,7 @@
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from time import monotonic
 from typing import Literal, Protocol
 
 Stage = Literal["load", "transform"]
@@ -8,6 +9,19 @@ Stage = Literal["load", "transform"]
 
 class PipelineError(ValueError):
     """A bounded, model-safe pipeline error that the agent can repair."""
+
+
+class GradingTimeout(PipelineError):
+    """The host's independent grading budget expired."""
+
+
+def grading_time_left(deadline: float | None, limit: float) -> float:
+    if deadline is None:
+        return limit
+    remaining = deadline - monotonic()
+    if remaining <= 0:
+        raise GradingTimeout("submission grading deadline expired")
+    return min(limit, remaining)
 
 
 class PartialTransformError(PipelineError):
@@ -28,6 +42,8 @@ class EpisodeConfig:
     execution_seconds: float = 1.0
     rollout_seconds: float = 90.0
     max_submissions: int = 2
+    defer_grading: bool = False
+    grading_seconds: float | None = None
 
 
 @dataclass(frozen=True)

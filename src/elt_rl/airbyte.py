@@ -13,7 +13,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
-from .contracts import PipelineError
+from .contracts import PipelineError, grading_time_left
 
 GROUPS = ("postgres", "mongodb", "aws_s3", "flat_files", "custom_api")
 
@@ -194,6 +194,7 @@ class AirbyteRun:
         self.terraform = terraform
         self.url = url.rstrip("/")
         self.timeout = timeout
+        self.grading_deadline: float | None = None
         self.apply_started = False
         self.active_job: str | None = None
         self.jobs: list[dict[str, str]] = []
@@ -205,7 +206,7 @@ class AirbyteRun:
                 [self.terraform, command, *args], cwd=self.directory, env=private_environment(),
                 stdout=subprocess.PIPE if command == "output" else subprocess.DEVNULL,
                 stderr=subprocess.PIPE if command == "apply" else subprocess.DEVNULL,
-                timeout=self.timeout, check=True,
+                timeout=grading_time_left(self.grading_deadline, self.timeout), check=True,
             )
         except subprocess.TimeoutExpired:
             raise PipelineError(f"Airbyte Terraform {command} timed out") from None
@@ -245,7 +246,7 @@ class AirbyteRun:
         request = Request(self.url + path, method=method, headers=headers,
                           data=json.dumps(body).encode() if body else None)
         try:
-            with self._opener.open(request, timeout=15) as response:
+            with self._opener.open(request, timeout=grading_time_left(self.grading_deadline, 15)) as response:
                 data = response.read(1_048_577)
         except HTTPError as error:
             raise PipelineError(f"Airbyte jobs API returned HTTP {error.code}") from None
@@ -267,6 +268,8 @@ class AirbyteRun:
             raise PipelineError("Airbyte did not return a valid sync job ID")
         self.active_job = job_id
         deadline = time.monotonic() + self.timeout
+        if self.grading_deadline is not None:
+            deadline = min(deadline, self.grading_deadline)
         while time.monotonic() < deadline:
             status = self._request("GET", f"/jobs/{job_id}").get("status")
             if status in {"succeeded", "failed", "cancelled", "canceled", "incomplete"}:
@@ -282,6 +285,7 @@ class AirbyteRun:
         raise PipelineError(f"Airbyte sync {name} timed out")
 
     def cleanup(self) -> None:
+        self.grading_deadline = None
         try:
             if self.active_job:
                 self._request("DELETE", f"/jobs/{self.active_job}")

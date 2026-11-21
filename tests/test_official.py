@@ -3,6 +3,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
+from time import monotonic
 
 import pytest
 
@@ -13,9 +14,84 @@ from elt_rl import official
 from elt_rl import source_probe
 from elt_rl.books_setup import AIRBYTE_FIELDS, RUNTIME_FILES, bind_airbyte, stage
 from elt_rl.airbyte import AirbyteRun, select_streams, streams, terraform_plan
-from elt_rl.contracts import EpisodeConfig, Grade, PipelineError
+from elt_rl.contracts import EpisodeConfig, Grade, GradingTimeout, PipelineError
 from elt_rl.episode import ELTEpisodeState
 from elt_rl.official_sql import public_sql_review, safe_select
+
+
+def test_airbyte_grading_deadline_blocks_new_work_but_not_cleanup(tmp_path, monkeypatch):
+    run = AirbyteRun(tmp_path, "terraform", "http://localhost/api/public/v1", 60)
+    run.grading_deadline = monotonic() - 1
+    run.auth = "local-test"
+    with pytest.raises(GradingTimeout):
+        run._sync("flat_files", "connection-id")
+    assert run.active_job is None and not run.jobs
+
+    run.active_job = "123"
+    run.apply_started = True
+    commands = []
+
+    def cancel(method, path):
+        assert run.grading_deadline is None
+        commands.append((method, path))
+
+    def terraform(command, *_args):
+        assert run.grading_deadline is None
+        commands.append(command)
+
+    monkeypatch.setattr(run, "_request", cancel)
+    monkeypatch.setattr(run, "_tf", terraform)
+    run.cleanup()
+    assert commands == [("DELETE", "/jobs/123"), "destroy"]
+
+
+def test_snowflake_grading_cleanup_still_drops_database_after_airbyte_failure(tmp_path):
+    class FailedAirbyte:
+        directory = tmp_path / "airbyte"
+
+        def cleanup(self):
+            raise PipelineError("injected Airbyte failure")
+
+    backend = official.SnowflakeBooksBackend.__new__(official.SnowflakeBooksBackend)
+    backend.database = "ELT_RL_TEST"
+    backend.report = tmp_path
+    backend.created = True
+    backend.airbyte = FailedAirbyte()
+    backend.grading_deadline = monotonic() - 1
+    statements = []
+
+    def run_sql(sql):
+        assert backend.grading_deadline is None
+        statements.extend(sql)
+
+    backend._run_sql = run_sql
+    with pytest.raises(PipelineError, match="operator review"):
+        backend.close()
+    assert statements == ["DROP DATABASE IF EXISTS ELT_RL_TEST"]
+    assert not backend.created
+    assert (tmp_path / "cleanup-required.txt").is_file()
+
+
+def test_book_publication_date_text_keeps_raw_csv_before_local_query(tmp_path, monkeypatch):
+    duckdb = pytest.importorskip("duckdb")
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "scripts"))
+    from books_evaluator_smoke import load_local_inputs
+
+    folder = tmp_path / "flat-files"
+    folder.mkdir()
+    (folder / "book.csv").write_text("book_id,publication_date\n1,1992-01-02\n2,1996-09-01\n", encoding="utf-8")
+    with duckdb.connect() as inferred, duckdb.connect() as mirror:
+        load_local_inputs(inferred, tmp_path, ["book"])
+        load_local_inputs(mirror, tmp_path, ["book"], book_publication_date_text=True)
+        assert inferred.execute("SELECT typeof(publication_date) FROM book LIMIT 1").fetchone() == ("DATE",)
+        assert mirror.execute("SELECT typeof(publication_date) FROM book LIMIT 1").fetchone() == ("VARCHAR",)
+        assert mirror.execute("SELECT publication_date FROM book ORDER BY book_id").fetchall() == [
+            ("1992-01-02",), ("1996-09-01",),
+        ]
+        with pytest.raises(duckdb.BinderException):
+            mirror.execute("SELECT EXTRACT(YEAR FROM publication_date) FROM book")
+        assert mirror.execute("SELECT EXTRACT(YEAR FROM TRY_CAST(publication_date AS DATE)) "
+                              "FROM book ORDER BY book_id").fetchall() == [(1992,), (1996,)]
 
 
 @pytest.mark.parametrize(("error", "message"), [
@@ -680,7 +756,8 @@ def test_books_quoted_cte_name_keeps_snowflake_case_sensitivity():
     ("42000", "line 1 at position 90 invalid identifier 'CA.COUNTRY_ID' private-credential-marker",
      "invalid identifier 'CA.COUNTRY_ID' (generated statement, line 1 at position 90)"),
     ("22000", "Function EXTRACT does not support VARCHAR(16777216) argument type private-credential-marker",
-     "a date-part function received text. Check the actual column type and parse the date first."),
+     "a date-part function received text. Check the actual column type and parse the date first. "
+     "Use TRY_TO_DATE with the observed format when the input can be invalid."),
 ])
 def test_books_warehouse_error_names_only_the_failing_artifact(monkeypatch, state, native_message, detail):
     import snowflake.connector

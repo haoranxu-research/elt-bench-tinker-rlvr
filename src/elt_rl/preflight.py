@@ -55,8 +55,11 @@ def _snowflake_probe(credentials: dict, prove_namespace: bool) -> str:
     import snowflake.connector
 
     database = "ELT_RL_PREFLIGHT_" + uuid.uuid4().hex.upper()
+    options = snowflake_connect_options(credentials)
+    if not prove_namespace:
+        options.pop("warehouse")
     with closing(snowflake.connector.connect(
-        **snowflake_connect_options(credentials),
+        **options,
         login_timeout=15, network_timeout=20, session_parameters={"QUERY_TAG": database},
     )) as connection, closing(connection.cursor()) as cursor:
         cursor.execute("SHOW WAREHOUSES", timeout=20)
