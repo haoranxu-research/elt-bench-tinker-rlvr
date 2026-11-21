@@ -788,6 +788,9 @@ def test_snowflake_validator_allows_native_text_date_conversion(conversion):
      "invalid identifier 'CA.COUNTRY_ID' (generated statement, line 1 at position 90)"),
     ("42000", "ambiguous column name 'AUTHOR_ID' private-credential-marker",
      "ambiguous column name 'AUTHOR_ID'. Qualify the column with its source alias."),
+    ("42601", "line 1 at position 116 [BA.AUTHOR_ID] is not a valid group by expression private-credential-marker",
+     "a selected expression is neither grouped nor aggregated. Use the same qualified column in SELECT and GROUP BY, "
+     "or aggregate the expression. (generated statement, line 1 at position 116)"),
     ("22000", "Function EXTRACT does not support VARCHAR(16777216) argument type private-credential-marker",
      "a date-part function received text. Check the actual column type and parse the date first. "
      "Use TRY_TO_DATE with the observed format when the input can be invalid."),

@@ -207,6 +207,10 @@ class SnowflakeBooksBackend:
                     detail += f": {identifier[0]}"
                     if identifier[1].lower() == "ambiguous column name":
                         detail += ". Qualify the column with its source alias."
+                if re.search(r"not a valid group by expression|must appear in the group by clause|"
+                             r"neither an aggregate nor in the group by clause", error.msg, re.IGNORECASE):
+                    detail += (": a selected expression is neither grouped nor aggregated. Use the same "
+                               "qualified column in SELECT and GROUP BY, or aggregate the expression.")
                 if location:
                     detail += f" ({'generated statement, ' if artifact else ''}{location[0]})"
             prefix = f"{artifact}: " if artifact else ""

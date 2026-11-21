@@ -96,6 +96,7 @@ BOOKS_INSTRUCTION = (
     "For each model, use write_pipeline_file(path, content) to save the full SQL query, then test just "
     "that file with execute_pipeline(stage=transform, file=filename). Rewrite the named file when it fails. "
     "Only write_pipeline_file accepts SQL text. Follow the remaining budget and tested files in tool feedback. "
+    "Use inspect_values to check source formats instead of replacing a full draft with a diagnostic query. "
     "Get at least one execution result for every required model before rereading or reviewing "
     "already tested SQL. Keep tested files unless a public check identifies a problem. Do not revise a saved "
     "draft again until you have tested it. You can call "
@@ -230,6 +231,10 @@ class ELTEpisodeState:
         if attempts is not None:
             status += f" Warehouse transform attempts left: {attempts}."
         status += f" Current tested files: {tested or 'none'}."
+        if self._failed_public_checks:
+            remaining_checks = ", ".join(name for name in self.task.transform_artifacts
+                                         if name in self._failed_public_checks)
+            status += f" Public data checks still need repair: {remaining_checks}."
         if self._loaded:
             untested = [name for name in self.task.transform_artifacts if name not in self._tested_files]
             if untested:
