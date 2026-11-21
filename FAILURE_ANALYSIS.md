@@ -9,6 +9,24 @@ which put SQL in actions that do not write files. The final workflow adds
 single-file execution and explicit partial submission. This historical
 trace still ends with reward zero.
 
+## November 21 follow-up
+
+The final authorized rollout loaded all 15 tables and 84,337 rows.
+File-level feedback directed the model to `publishers.sql`. It fixed
+the original parse error, then spent several turns on a Snowflake
+`PUBLISHER_NAME` error and two rejected table qualifications. Its
+turn-21 batch passed the publisher and customer statements and stopped at
+an author statement with SQLSTATE `42601`. The model rewrote
+`authors.sql` but had already consumed the four warehouse transform
+attempts. The underlying author error text was unavailable in the bounded
+tool feedback.
+
+Successful statements earlier in a failed batch did not create tested-file
+eligibility. The trajectory used whole-batch calls exclusively and did not
+request individual validation or partial submission. The episode ended at
+turn 24 with reward 0. This eligibility gap is separate from SQL correctness and
+from the earlier lack of file attribution. [Latest evidence](evidence/books-snowflake-final.md)
+
 ## 1. Executive summary
 
 I investigated the rollout at commit `bbd1574` using the saved live trajectory

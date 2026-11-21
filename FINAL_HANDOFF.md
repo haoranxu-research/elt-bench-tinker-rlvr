@@ -5,11 +5,11 @@
 | Requirement | Executed evidence | Status |
 | --- | --- | --- |
 | Credential-free, multi-turn ELT | The SQLite trace repaired a failed transform, submitted from a later turn, and earned 1.0 on a fresh replay. The test suite covers faulty input, failed transforms, partial and unsubmitted scores, and cleanup. | Complete |
-| Credentialed official task | The second real Qwen rollout loaded all 84,337 expected rows into Snowflake. It ended unsubmitted with reward 0. Neither evaluator ran against Snowflake. | Final scored agent rollout pending |
+| Credentialed official task | The November 21 Qwen rollout loaded all 84,337 expected rows into Snowflake. It ended unsubmitted after 24 turns with reward 0. Neither evaluator ran against Snowflake. | Live load verified. Scored agent submission pending. |
 | Real Tinker RL update | A previous pilot completed one optimizer step from execution-derived SQLite rewards and verified a changed probe and matching checkpoint metadata. | Complete |
 | Submission materials | The repository, reproduction guide, design, and professor summary are ready for review. | Local deliverables complete |
 
-[Prior credentialed rollout](evidence/books-snowflake-second.md) ·
+[Latest credentialed rollout](evidence/books-snowflake-final.md) ·
 [Tinker optimizer evidence](evidence/tinker-pilot.md) ·
 [Design](DESIGN.md) · [Professor-facing summary](PROFESSOR_SUMMARY.md)
 
@@ -30,26 +30,25 @@ model outputs. With one model absent, Stage 2 awarded two of three and the
 environment formula returned 0.7833333. With an incorrect raw count, Stage 2
 skipped all model queries. [Commands and evidence](evidence/books-final-audit.md)
 
-## Before approval
+## November 21 authorization and checks
 
 - The fresh local Airbyte preflight passed on all six connections. It
   matched all 15 pinned tables and 84,337 rows, with cleanup verified.
   [Readiness evidence](evidence/books-final-audit.md)
-- In Snowflake, inspect the raw `SHOW WAREHOUSES LIKE 'ELT_BOOKS_WH'`
-  and `SHOW RESOURCE MONITORS LIKE 'ELT_BOOKS_MONITOR'` results as an
-  administrator. Confirm the actual monitor attachment, remaining headroom,
-  and suspension trigger. The service account can log in and has the
-  required grants, but cannot read that allowance.
-- Authorize one Tinker sampling-only rollout and one Snowflake rollout,
-  including its fresh grading replay. Leave Airbyte automatic retries off.
+- The administrator console confirmed that `ELT_BOOKS_MONITOR` covered
+  `ELT_BOOKS_WH`. Before launch it showed 0.46 used credits and an
+  immediate suspension threshold of 1.50 credits.
+- Authorization covered one sampling-only rollout and its Snowflake
+  loading and grading replay, with Airbyte retry limits set to one attempt.
 
 ## Final live command
 
 The authoritative model entry point is `elt_rl.run official-rollout`.
-Run the following only after approval and the administrator check. It uses
+The November 21 command used
 the baseline Qwen3.5-4B with the pinned renderer, one group member, at most
 24 turns and 32 tool calls, and one explicit submission replay. Use a new
-private output path on S. [Official setup](LIVE_SETUP.md#official-snowflake-books)
+private output path on S. The local wrapper records exact prompt tokens in
+the private run directory. [Official setup](LIVE_SETUP.md#official-snowflake-books)
 
 ```powershell
 $private = Join-Path $env:LOCALAPPDATA 'ELTBenchBooks'
@@ -63,7 +62,7 @@ $env:TMP = $tmp
 $env:CHECKPOINT_DISABLE = '1'
 $env:HF_HUB_OFFLINE = '1'
 $env:TRANSFORMERS_OFFLINE = '1'
-.\.venv\Scripts\python.exe -c 'from pathlib import Path; import sys,runpy; sys.path.append(str(Path(sys.base_prefix) / ""Lib"" / ""site-packages"")); runpy.run_module(""elt_rl.run"", run_name=""__main__"")' official-rollout --allow-paid --allow-warehouse --budget-usd 0.15 --model Qwen/Qwen3.5-4B --renderer qwen3_5_disable_thinking --out runs/books-official-final 2>&1 | ForEach-Object ToString | Tee-Object runs/books-official-final-console.txt
+.\.venv\Scripts\python.exe runs/launch-books-final.py official-rollout --allow-paid --allow-warehouse --budget-usd 0.15 --model Qwen/Qwen3.5-4B --renderer qwen3_5_disable_thinking --out runs/books-official-final 2>&1 | ForEach-Object ToString | Tee-Object runs/books-official-final-console.txt
 ```
 
 The runner checks current rates before creating a Tinker session. The
@@ -83,9 +82,11 @@ Record billed usage from the provider and distinguish it from token-rate
 estimates and rounded monitor deltas. Report the actual reward and whether
 each stage executed. A missing submit continues to earn zero by design.
 
-The audit launched no paid workload. The historical zero-reward rollout is
-still the latest genuine agent result for the official task. No new charge,
-reward, or live grade was generated.
+The November 21 run exited unsubmitted with reward 0. Its recorded token
+usage implies USD 0.020613408 at public rates. The monitor displayed an
+approximately 0.25-credit increase. Audit checks confirmed a suspended
+warehouse and zero remaining run-owned databases or Airbyte resources.
+[Run and billing evidence](evidence/books-snowflake-final.md)
 
 ## Repository verification
 

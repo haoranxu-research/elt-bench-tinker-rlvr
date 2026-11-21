@@ -180,11 +180,11 @@ tool trace, submitted artifacts and per-attempt sync provenance. A cleanup failu
 in `private-recovery`. Keep the entire run directory private and review cleanup
 notices before using the result.
 
-The second authorized live `books` attempt loaded all 15 streams through
-Airbyte into Snowflake, where the agent observed 84,337 rows at the pinned
-input counts. Its SQL failed validation and the episode ended unsubmitted
-with reward 0. Neither official grading stage ran against the live warehouse.
-[Second credentialed attempt evidence](evidence/books-snowflake-second.md)
+The November 21 live `books` attempt loaded all 15 streams and 84,337 rows
+through Airbyte into Snowflake. The model repaired the publisher SQL, then
+hit an author SQL error and the transformation attempt limit. It ended
+unsubmitted after 24 turns with reward 0. Neither official grading stage
+ran against the live warehouse. [Latest credentialed evidence](evidence/books-snowflake-final.md)
 
 The validator now reports the first actionable error in each invalid SQL file
 in the same tool observation. The saved 24-turn trajectory confirms delivery
@@ -195,7 +195,7 @@ A separate host reference passed both pinned evaluator stages offline.
 It used the staged `books` inputs and a local SQL transport.
 [Smoke results and one-load Snowflake procedure](evidence/books-evaluator-smoke.md)
 
-For the final official agent run, follow the [launch procedure](FINAL_HANDOFF.md#final-live-command).
+See the [recorded launch procedure](FINAL_HANDOFF.md#final-live-command).
 The official tools support testing a single saved SQL file and explicitly
 submitting the files that passed. Grading still uses a fresh warehouse
 and the official Stage 1 gate. [Final audit](evidence/books-final-audit.md)

@@ -23,19 +23,19 @@ The post-update forward probe measured a change in action log probabilities,
 and checkpoint metadata matched the base model and LoRA rank. This
 establishes the update on local SQLite rewards.
 
-In the second credentialed `books` attempt, the Tinker-sampled agent selected
+In the November 21 credentialed `books` attempt, the Tinker-sampled agent selected
 all 15 official streams and observed all 84,337 expected rows in Snowflake.
 Airbyte completed six syncs with one attempt each. The agent's SQL failed
-validation, and the episode ended unsubmitted with reward 0.
-Neither official evaluation stage ran against Snowflake. The host later
-ran both pinned evaluators using staged inputs and DuckDB transport.
+validation and execution, and the episode ended unsubmitted with reward 0.
+Neither official evaluation stage ran against Snowflake. In an independent
+earlier check, the host ran both pinned evaluators using staged inputs and DuckDB transport.
 The full reference matched all three output models. A separate check with
 one absent model received Stage 2 credit for two of three outputs.
 
 The final interaction workflow separates write, execute and submit,
 identifies SQL errors by file, and supports explicit partial submission
 of tested artifacts. The pinned grader and reward weights are unchanged.
-A fresh credentialed agent run awaits warehouse quota verification and
-authorization.
-[Design](DESIGN.md) [Second credentialed attempt evidence](evidence/books-snowflake-second.md)
+The agent used only whole-batch transforms and exhausted its attempts
+before submitting. The run's database and Airbyte resources were removed.
+[Design](DESIGN.md) [Latest credentialed evidence](evidence/books-snowflake-final.md)
 [Final reproducibility and acceptance status](FINAL_HANDOFF.md)

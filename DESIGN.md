@@ -84,8 +84,8 @@ The local warehouse path, real Qwen text renderer and Cookbook datum path
 have offline evidence. The pinned evaluator used a synthetic warehouse
 connector in tests. The production Tinker pilot completed one LoRA optimizer
 step using local SQLite rewards, measured a post-update log-probability
-change, and verified checkpoint metadata. The second live `books` attempt
-observed all 15 expected source tables after the Airbyte load to Snowflake.
-The agent's transformations failed validation. It finished unsubmitted with
-reward 0, so the official evaluators remain unexecuted.
-[Pilot evidence](evidence/tinker-pilot.md) [Second credentialed attempt evidence](evidence/books-snowflake-second.md)
+change, and verified checkpoint metadata. The November 21 live `books`
+attempt observed all 15 expected source tables in Snowflake. The model
+used only whole-batch transforms, exhausted its transform attempts and
+finished unsubmitted with reward 0. Both live evaluator stages remain pending.
+[Pilot evidence](evidence/tinker-pilot.md) [Latest credentialed evidence](evidence/books-snowflake-final.md)
