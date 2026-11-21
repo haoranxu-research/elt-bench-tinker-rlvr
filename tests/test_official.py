@@ -133,6 +133,17 @@ def test_books_malformed_model_manifest_does_not_replace_saved_sources(checkout,
         assert "loaded" in episode.dispatch("execute_pipeline", {"stage": "load"}, turn=7).text
         assert loaded == [sources]
 
+        sql = "SELECT " + "x" * 1243 + "tail"
+        episode.dispatch("write_pipeline_file", {"path": "publishers.sql", "content": sql}, turn=8)
+        first_page = episode.dispatch("read_pipeline_file", {"path": "publishers.sql"}, turn=9)
+        assert "Next offset: 1250" in first_page.text
+        assert episode.tool_schema("read_pipeline_file")["properties"]["offset"]["type"] == "integer"
+        for offset in (1250, "1250"):
+            second_page = episode.dispatch("read_pipeline_file", {"path": "publishers.sql", "offset": offset}, turn=10)
+            assert "\ntail\n" in second_page.text
+        invalid_offset = episode.dispatch("read_pipeline_file", {"path": "publishers.sql", "offset": True}, turn=11)
+        assert "offset must be a nonnegative character index" in invalid_offset.text
+
 
 @pytest.mark.parametrize("bad_count", [False, True])
 def test_books_source_probe_checks_every_row_count_and_cleans_up(checkout, tmp_path, monkeypatch, bad_count):

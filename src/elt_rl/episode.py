@@ -27,6 +27,9 @@ class ToolSpec:
             properties["file"]["description"] = "Optional filename. Use load.json for load or one saved SQL filename for transform."
         if "mode" in properties:
             properties["mode"].update(enum=["complete", "partial"], default="complete")
+        if "offset" in properties:
+            properties["offset"] = {"type": "integer", "minimum": 0, "maximum": 999999,
+                                    "description": "Character offset from the previous file response."}
         return {
             "type": "object",
             "properties": properties,
@@ -77,6 +80,8 @@ BOOKS_INSTRUCTION = (
     "Use bare filenames. Inspect actual warehouse columns and read the relevant model and relationship sections before writing SQL. "
     "Start with one short independent transformation and get it tested. Check each join key against the schema. "
     "Inspect source values before filtering coded labels. Keep undefined rates NULL unless the task says to fill them. "
+    "Apply a zero default only to the measures that explicitly request one, and check that entities without "
+    "related source rows keep their required output row. "
     "Use percentage points (100.0 times the ratio) for a percentage. Keep precision unless rounding is requested. "
     "Audit that numerator and denominator use the same source grain. For one row per entity, aggregate each measure at its "
     "own grain before joining, and use a ROW_NUMBER CTE for a ranked row rather than correlated ORDER BY/LIMIT. "
@@ -85,7 +90,9 @@ BOOKS_INSTRUCTION = (
     "For each model, use write_pipeline_file(path, content) to save the full SQL query, then test just "
     "that file with execute_pipeline(stage=transform, file=filename). Rewrite the named file when it fails. "
     "Only write_pipeline_file accepts SQL text. Follow the remaining budget and tested files in tool feedback. "
-    "Work through all three output models and check the required metrics before submitting. Submit on a later turn after testing. "
+    "Get at least one execution result for every required model before spending multiple turns reviewing "
+    "already tested SQL. Test each new file directly after saving it. Review the public requirements and "
+    "check the required metrics before submitting. Submit on a later turn after testing. "
     "If time or transform attempts are running out, "
     'call submit_pipeline with {"mode":"partial"} to grade the current tested subset. '
     "The last turn and last tool call are reserved for submission."
@@ -227,6 +234,12 @@ class ELTEpisodeState:
                 arguments = {**arguments, "content": json.dumps(arguments["content"], allow_nan=False)}
             except (TypeError, ValueError, RecursionError):
                 raise PipelineError("load.json content must be valid JSON") from None
+        if name == "read_pipeline_file" and "offset" in arguments:
+            offset = arguments["offset"]
+            if type(offset) is int and 0 <= offset <= 999999:
+                arguments = {**arguments, "offset": str(offset)}
+            elif type(offset) is not str:
+                raise PipelineError("offset must be a nonnegative character index up to 999999")
         if any(type(value) is not str for value in arguments.values()):
             raise PipelineError("tool arguments must be strings")
         if name == "read_task":
