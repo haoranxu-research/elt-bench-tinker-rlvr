@@ -44,16 +44,18 @@ class EpisodeTool:
     def to_spec(self) -> ToolSpec:
         return {"name": self.name, "description": self.description, "parameters": self.parameters_schema}
 
-    async def run(self, input: ToolInput) -> ToolResult:
-        turn = self.turn()
-        feedback = await asyncio.to_thread(
-            self.episode.dispatch, self.name, input.arguments, turn=turn,
-        )
+    def _dispatch_with_receipt(self, input: ToolInput, turn: int):
+        feedback = self.episode.dispatch(self.name, input.arguments, turn=turn)
         if self.trace_file is not None:
             with self.trace_file.open("a", encoding="utf-8") as stream:
                 stream.write(json.dumps({"turn": turn, "tool": self.name, "call_id": input.call_id,
                                          "arguments": input.arguments, "feedback": feedback.text,
                                          "submitted": feedback.submitted}) + "\n")
+        return feedback
+
+    async def run(self, input: ToolInput) -> ToolResult:
+        # Keep the receipt with the dispatched operation if the caller times out.
+        feedback = await asyncio.to_thread(self._dispatch_with_receipt, input, self.turn())
         return simple_tool_result(
             feedback.text, call_id=input.call_id or "", name=self.name, should_stop=feedback.submitted,
         )
@@ -385,6 +387,12 @@ class ELTGroupBuilder(EnvGroupBuilder):
                         await asyncio.to_thread(metadata.write_text,
                                                 json.dumps({"submitted": submitted,
                                                             "transforms": episode.submitted_files}), encoding="utf-8")
+                        if submitted:
+                            final_grade = episode.grade()
+                            grade_path = self.evidence_dir / f"{episode.workspace.name}.grade.json"
+                            await asyncio.to_thread(grade_path.write_text,
+                                                    json.dumps({**final_grade.metrics(), "reward": final_grade.reward}),
+                                                    encoding="utf-8")
             except OSError:
                 logger.error("Could not retain pipeline artifacts")
             finally:

@@ -110,3 +110,9 @@ An unsuccessful check provides a repair opportunity within the episode.
 The pinned graders still compute the final score. The Qwen3.6-35B-A3B
 agent used the workflow to submit three exact outputs with both stages
 and reward at 1.0 on DuckDB. [Model-driven evidence](evidence/books-full-baseline.md)
+
+On native Snowflake, the 35B agent submitted its tested publisher and
+customer files after author SQL failed. Stage 1 passed all raw tables
+and Stage 2 matched one output. The grading worker finished after the
+trajectory deadline, so the persisted warehouse grade and trajectory
+reward differ. [Native grading evidence](evidence/books-snowflake-35b.md)

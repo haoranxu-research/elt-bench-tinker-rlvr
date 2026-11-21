@@ -184,6 +184,12 @@ class SnowflakeBooksBackend:
             if not re.fullmatch(r"[A-Z0-9]{5}", state):
                 state = "unknown"
             detail = ""
+            if state in {"22000", "22007", "22018"} and isinstance(error.msg, str):
+                if re.search(r"Function\s+(EXTRACT|DATE_PART|YEAR)\s+does not support\s+(?:VARCHAR|TEXT)",
+                             error.msg, re.IGNORECASE):
+                    detail = ": a date-part function received text. Check the actual column type and parse the date first."
+                elif re.search(r"(?:Date|Timestamp) '[^'\r\n]+' is not recognized", error.msg, re.IGNORECASE):
+                    detail = ": a date or timestamp conversion failed. Check the input format."
             if state.startswith("42") and isinstance(error.msg, str):
                 identifier = re.search(r"(invalid identifier|unexpected) '[A-Z0-9_.$]{1,80}'",
                                        error.msg, re.IGNORECASE)
@@ -282,7 +288,7 @@ class SnowflakeBooksBackend:
         for table, column, data_type in rows:
             if table.lower() in allowed:
                 tables.setdefault(table.lower(), []).append(column.lower())
-                if data_type.upper().startswith(("DATE", "TIME")):
+                if data_type.upper().startswith(("DATE", "TIME")) or column.lower().endswith(("_date", "_time")):
                     self.temporal_columns[table.lower(), column.lower()] = data_type.upper()
         return tables
 
@@ -368,7 +374,7 @@ class SnowflakeBooksBackend:
         if not all(columns <= set(sources.get(table, ())) for table, columns in required.items()):
             return None
         schema = f"{self.database}.BOOKS."
-        (shipping, book_range, invalid_labels), = self._lookup_rows(
+        (shipping, book_range, invalid_labels, defined_rates), = self._lookup_rows(
             "WITH domestic_only AS ("
             f"SELECT co.customer_id FROM {schema}cust_order co LEFT JOIN {schema}shipping_method sm "
             "ON sm.method_id = co.shipping_method_id GROUP BY co.customer_id "
@@ -381,7 +387,10 @@ class SnowflakeBooksBackend:
             "TRY_CAST(CAST(per_books_over_13 AS VARCHAR) AS DOUBLE) NOT BETWEEN 0 AND 100.000001), "
             f"(SELECT COUNT(*) FROM {schema}customers o WHERE o.preferred_shipping_method IS NOT NULL "
             f"AND NOT EXISTS (SELECT 1 FROM {schema}shipping_method sm "
-            "WHERE sm.method_name = CAST(o.preferred_shipping_method AS VARCHAR)))"
+            "WHERE sm.method_name = CAST(o.preferred_shipping_method AS VARCHAR))), "
+            f"(SELECT COUNT(*) FROM {schema}customers o WHERE "
+            "(o.per_books_over_13 IS NOT NULL OR o.per_order_shipped_internationally IS NOT NULL) "
+            f"AND NOT EXISTS (SELECT 1 FROM {schema}cust_order co WHERE co.customer_id = o.customer_id))"
         )
         notes = []
         if shipping:
@@ -393,6 +402,9 @@ class SnowflakeBooksBackend:
         if invalid_labels:
             notes.append(f"{invalid_labels} non-NULL preferred shipping methods are not observed shipping method names. "
                          "Return the method name, rather than its numeric identifier.")
+        if defined_rates:
+            notes.append(f"{defined_rates} customers without orders have a defined purchase or shipping percentage. "
+                         "With no orders, these rates have a zero denominator and are undefined.")
         return " ".join(notes) or None
 
     def author_title_check(self, sources: dict[str, list[str]]) -> str | None:

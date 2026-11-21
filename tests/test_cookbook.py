@@ -314,6 +314,47 @@ def test_books_partial_submit_asks_to_test_saved_repair_before_deadline(tmp_path
         assert allowed.submitted
 
 
+def test_dispatched_tool_preserves_receipt_after_caller_cancellation(tmp_path):
+    from threading import Event
+    from tinker_cookbook.tool_use import ToolInput
+    from elt_rl.cookbook import EpisodeTool
+    from elt_rl.episode import Feedback
+
+    started, release = Event(), Event()
+    trace = tmp_path / "tools.jsonl"
+
+    class Episode:
+        def dispatch(self, *_args, **_kwargs):
+            started.set()
+            assert release.wait(2)
+            return Feedback("graded after the caller timed out", True)
+
+    async def run():
+        tool = EpisodeTool("submit_pipeline", lambda: 27, Episode(), trace)
+        task = asyncio.create_task(tool.run(ToolInput(arguments={}, call_id="submit")))
+        try:
+            assert await asyncio.to_thread(started.wait, 2)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        finally:
+            release.set()
+
+    asyncio.run(run())
+    recorded = json.loads(trace.read_bytes())
+    assert recorded["turn"] == 27 and recorded["submitted"]
+
+
+def test_sampling_receipts_include_the_sample_without_a_completed_turn(tmp_path):
+    from elt_rl.training import sampled_receipt_usage
+
+    path = tmp_path / "sampled-actions.jsonl"
+    path.write_text('{"tokens":[1,2],"prefill_cached_tokens":3,"prompt_tokens":5}\n'
+                    '{"tokens":[3],"prefill_cached_tokens":4,"prompt_tokens":8}\n', encoding="utf-8")
+    usage = sampled_receipt_usage(path)
+    assert (usage.sampled, usage.prefill_cached, usage.prefill_uncached, usage.trained) == (3, 7, 6, 0)
+
+
 def test_official_tool_trace_retains_feedback_even_without_submission(tmp_path):
     async def run():
         builder = ELTGroupBuilder(

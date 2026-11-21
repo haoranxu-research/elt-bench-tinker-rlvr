@@ -6,11 +6,12 @@
 | --- | --- | --- |
 | Credential-free, multi-turn ELT | The SQLite trace repaired a failed transform, submitted from a later turn, and earned 1.0 on a fresh replay. The test suite covers faulty input, failed transforms, partial and unsubmitted scores, and cleanup. | Complete |
 | Hosted agent submission with pinned books grading | Qwen3.6-35B-A3B independently wrote, executed, and submitted all three outputs on DuckDB. All 15 tables and 84,337 rows were present. Stage 1 = 1.0, Stage 2 = 1.0, reward = 1.0. | Local target complete |
-| Credentialed official task | The November 21 Qwen rollout loaded all 84,337 expected rows into Snowflake. It ended unsubmitted after 24 turns with reward 0. Neither evaluator ran against Snowflake. | Live load verified. Scored agent submission pending. |
+| Credentialed official task | Qwen3.6-35B-A3B loaded all 84,337 rows and made a partial submission. Native graders returned Stage 1 = 1.0, Stage 2 = 1/3, warehouse reward = 0.566667. The trajectory timed out and recorded reward 0. | Native two-stage grading verified. Full correctness pending. |
 | Real Tinker RL update | A previous pilot completed one optimizer step from execution-derived SQLite rewards and verified a changed probe and matching checkpoint metadata. | Complete |
 | Submission materials | The repository records the current results and reproduction commands. | Final baseline handoff pending |
 
-[Latest credentialed rollout](evidence/books-snowflake-final.md) ·
+[Earlier credentialed rollout](evidence/books-snowflake-final.md) ·
+[35B native grading and diagnosis](evidence/books-snowflake-35b.md) ·
 [Hosted model correctness and diagnostics](evidence/books-full-baseline.md) ·
 [Hosted submission and official preflight](evidence/books-context-completion.md) ·
 [Tinker optimizer evidence](evidence/tinker-pilot.md) ·
@@ -75,9 +76,9 @@ tokens, and 8,192 sampled tokens. Measured usage implies **USD
 
 ## Final live command
 
-The local score requirement passed in `stronger-13`. The command below
-matches that run's model, renderer, and limits. The official rollout still
-requires separate authorization for Snowflake and Tinker.
+The command below is the record of the single authorized 35B Snowflake
+launch. That run has finished. A new run requires fresh authorization
+and a new estimate of warehouse allowance and wall time.
 
 The authoritative model entry point is `elt_rl.run official-rollout`.
 The candidate is `Qwen/Qwen3.6-35B-A3B` with its pinned no-thinking

@@ -42,8 +42,11 @@ model submission on Snowflake remains pending.
 The hosted Qwen3.6-35B-A3B agent loaded the 15 pinned `books` tables
 (84,337 rows) into DuckDB. It independently wrote, executed, repaired,
 and submitted all three SQL transformations. The pinned evaluators
-returned Stage 1 = 1.0, Stage 2 = 1.0, and reward = 1.0. A new official
-Snowflake grading run awaits separate authorization.
+returned Stage 1 = 1.0, Stage 2 = 1.0, and reward = 1.0. A subsequent
+credentialed Snowflake run submitted two files. The native evaluators
+recorded Stage 1 = 1.0, Stage 2 = 1/3, and warehouse reward = 0.566667.
+The trajectory timed out during the grading replay and recorded reward 0.
+[Native grading evidence](evidence/books-snowflake-35b.md)
 [Hosted submission evidence](evidence/books-full-baseline.md)
 [Design](DESIGN.md) [Latest credentialed evidence](evidence/books-snowflake-final.md)
 [Model and protocol evidence](evidence/books-model-readiness.md)

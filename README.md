@@ -10,8 +10,10 @@ Snowflake `books` rollout and a one-step Tinker LoRA command.
 
 The hosted Qwen3.6-35B-A3B agent authored and submitted all three `books`
 transformations on DuckDB. The pinned evaluators returned Stage 1 = 1.0,
-Stage 2 = 1.0 and reward = 1.0. The separate Snowflake grading run
-awaits authorization. [Trajectory and scoring evidence](evidence/books-full-baseline.md)
+Stage 2 = 1.0 and reward = 1.0. The separate credentialed Snowflake run
+graded a partial submission at Stage 1 = 1.0 and Stage 2 = 1/3.
+[Local scoring evidence](evidence/books-full-baseline.md)
+[Native grading and diagnosis](evidence/books-snowflake-35b.md)
 
 [Implementation design](DESIGN.md) · [Phase 1 evidence](evidence/phase1.txt) ·
 [Integration evidence](evidence/integrations.txt) · [Final handoff](FINAL_HANDOFF.md) · [Live Tinker pilot](evidence/tinker-pilot.md)

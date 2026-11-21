@@ -321,6 +321,10 @@ class ELTEpisodeState:
     def _inspect_warehouse(self, table: str | None = None) -> str:
         if not self.task.load_streams:
             return self.backend.inspect()
+        if self._loaded and table is not None:
+            name = table.lower()
+            if name in self.warehouse_columns and any(name in streams for streams in self.task.load_streams.values()):
+                return self._catalog_table(name, self.warehouse_columns[name])
         self.warehouse_columns = self.backend.columns() if self._loaded else {}
         if table is not None:
             names = self.warehouse_columns.get(table.lower())

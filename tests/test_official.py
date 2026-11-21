@@ -481,7 +481,8 @@ def test_public_customer_rate_check_uses_observed_shipping_and_percentage_range(
         db.execute("CREATE TABLE books.shipping_method AS SELECT * FROM (VALUES (1, 'Standard'), (2, 'International')) "
                    "v(method_id, method_name)")
         db.execute("CREATE TABLE books.customers AS SELECT * FROM "
-                   "(VALUES (10, 100, 120, '1'), (20, 100, 100, 'International'), (30, NULL, 0, NULL)) "
+                   "(VALUES (10, 100, 120, '1'), (20, 100, 100, 'International'), (30, NULL, 0, NULL), "
+                   "(40, 0, 0, NULL)) "
                    "v(customer_id, per_order_shipped_internationally, per_books_over_13, preferred_shipping_method)")
         backend._lookup_rows = lambda query: db.execute(query).fetchall()
         sources = {"cust_order": ["customer_id", "shipping_method_id"],
@@ -489,9 +490,12 @@ def test_public_customer_rate_check_uses_observed_shipping_and_percentage_range(
         issue = backend.customer_rate_check(sources)
         assert "only non-International shipping methods" in issue and "outside 0 to 100" in issue
         assert "not observed shipping method names" in issue
+        assert "without orders have a defined purchase or shipping percentage" in issue
         db.execute("UPDATE books.customers SET per_order_shipped_internationally = 0, per_books_over_13 = 100, "
                    "preferred_shipping_method = 'Standard' "
                    "WHERE customer_id = 10")
+        db.execute("UPDATE books.customers SET per_order_shipped_internationally = NULL, per_books_over_13 = NULL "
+                   "WHERE customer_id = 40")
         assert backend.customer_rate_check(sources) is None
 
 
@@ -672,7 +676,13 @@ def test_books_quoted_cte_name_keeps_snowflake_case_sensitivity():
         safe_select('WITH "authors" AS (SELECT * FROM author) SELECT * FROM AUTHORS', frozenset({"author"}))
 
 
-def test_books_warehouse_error_names_only_the_failing_artifact(monkeypatch):
+@pytest.mark.parametrize(("state", "native_message", "detail"), [
+    ("42000", "line 1 at position 90 invalid identifier 'CA.COUNTRY_ID' private-credential-marker",
+     "invalid identifier 'CA.COUNTRY_ID' (generated statement, line 1 at position 90)"),
+    ("22000", "Function EXTRACT does not support VARCHAR(16777216) argument type private-credential-marker",
+     "a date-part function received text. Check the actual column type and parse the date first."),
+])
+def test_books_warehouse_error_names_only_the_failing_artifact(monkeypatch, state, native_message, detail):
     import snowflake.connector
 
     class Warehouse:
@@ -684,10 +694,7 @@ def test_books_warehouse_error_names_only_the_failing_artifact(monkeypatch):
 
         def execute(self, statement, **_kwargs):
             if statement.startswith("CREATE OR REPLACE TABLE PROBE.BOOKS.customers"):
-                raise snowflake.connector.errors.ProgrammingError(
-                    msg="line 1 at position 90 invalid identifier 'CA.COUNTRY_ID' private-credential-marker",
-                    sqlstate="42000",
-                )
+                raise snowflake.connector.errors.ProgrammingError(msg=native_message, sqlstate=state)
 
     monkeypatch.setattr(snowflake.connector, "connect", lambda **_kwargs: Warehouse())
     backend = object.__new__(official.SnowflakeBooksBackend)
@@ -699,10 +706,7 @@ def test_books_warehouse_error_names_only_the_failing_artifact(monkeypatch):
     files = {f"{name}.sql": "SELECT * FROM author" for name in official.MODELS}
     with pytest.raises(PipelineError) as captured:
         backend.execute("transform", files)
-    assert str(captured.value) == (
-        "customers.sql: Snowflake query failed (SQLSTATE 42000): "
-        "invalid identifier 'CA.COUNTRY_ID' (generated statement, line 1 at position 90)"
-    )
+    assert str(captured.value) == f"customers.sql: Snowflake query failed (SQLSTATE {state}): {detail}"
     assert backend.transform_attempts == 1
 
 
@@ -950,7 +954,7 @@ def test_official_episode_calls_two_isolated_warehouse_replays(checkout, tmp_pat
         def fetchall(self):
             if ".INFORMATION_SCHEMA.COLUMNS " in statements[-1]:
                 return [("AUTHOR", "AUTHOR_ID", "NUMBER"), ("AUTHOR", "AUTHOR_NAME", "TEXT"),
-                        ("BOOK", "PUBLICATION_DATE", "DATE"), ("PRIVATE_TABLE", "SECRET", "TIMESTAMP_NTZ"),
+                        ("BOOK", "PUBLICATION_DATE", "TEXT"), ("PRIVATE_TABLE", "SECRET", "TIMESTAMP_NTZ"),
                         *((filename.removesuffix(".sql").upper(), col.upper(), "TEXT")
                           for filename, cols in task.output_columns.items() for col in cols)]
             if statements[-1].startswith("SELECT COUNT(*), COUNT(DISTINCT"):
@@ -977,10 +981,12 @@ def test_official_episode_calls_two_isolated_warehouse_replays(checkout, tmp_pat
         call("write_pipeline_file", 3, path="load.json", content='{"sources":{"mongodb":["author"]}}')
         loaded = call("execute_pipeline", 4, stage="load").text
         assert "author=7" in loaded and "author(author_id, author_name)" in loaded
-        assert "book(publication_date DATE)" in loaded
+        assert "book(publication_date TEXT)" in loaded
         assert "Still need successful tests: publishers.sql, customers.sql, authors.sql." in loaded
         assert "SECRET" not in loaded
+        catalog_queries = len(statements)
         assert "author(author_id, author_name)" in call("inspect_warehouse", 4, table="author").text
+        assert len(statements) == catalog_queries
         for turn, name in enumerate(official.MODELS, start=5):
             call("write_pipeline_file", turn, path=f"{name}.sql", content="SELECT * FROM author")
         assert "Snowflake transform finished" in call("execute_pipeline", 8, stage="transform").text

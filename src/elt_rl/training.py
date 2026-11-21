@@ -144,6 +144,17 @@ def observed_usage(evidence: list[dict], datums: list[tinker.Datum]) -> TokenUsa
     )
 
 
+def sampled_receipt_usage(path: Path) -> TokenUsage:
+    """Count responses even when their subsequent tool turn times out."""
+    rows = [json.loads(line) for line in path.read_bytes().splitlines()] if path.is_file() else []
+    return TokenUsage(
+        sampled=sum(len(row["tokens"]) for row in rows),
+        prefill_cached=sum(row["prefill_cached_tokens"] for row in rows),
+        prefill_uncached=sum(max(0, row["prompt_tokens"] - row["prefill_cached_tokens"]) for row in rows),
+        trained=0,
+    )
+
+
 def alignment_evidence(datums: list[tinker.Datum]) -> dict:
     """Fingerprint the audited targets without storing raw text in the manifest."""
     digest = hashlib.sha256()
@@ -308,12 +319,18 @@ async def run_remote(
                sampled_actions_verified=True)
         datums = datums_for_group(group, require_provenance=True) if train else []
         usage = observed_usage(evidence, datums)
-        sample_usage = replace(usage, trained=0)
+        sample_usage = replace(usage, trained=0) if train else sampled_receipt_usage(out / "sampled-actions.jsonl")
         record(sampling_token_usage=asdict(sample_usage), estimated_sampling_usd=prices.estimate_usd(sample_usage))
         if not train:
             submitted = any(turn["metrics"].get("submitted", 0) for item in evidence for turn in item["turns"])
+            host_grades = sorted((out / "pipelines").glob("*.grade.json"))
+            if host_grades:
+                record(warehouse_grade=json.loads(host_grades[0].read_bytes()))
             if any((out / "official").glob("*/cleanup-required.txt")):
-                record(status="cleanup_required", submitted=submitted)
+                record(status="cleanup_required", submitted=submitted or bool(host_grades))
+                return 2
+            if host_grades and not submitted:
+                record(status="warehouse_submission_outside_trajectory", submitted=True)
                 return 2
             record(status="rollout_submitted" if submitted else "rollout_unsubmitted", submitted=submitted)
             return 0 if submitted else 2
