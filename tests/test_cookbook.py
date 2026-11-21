@@ -302,6 +302,10 @@ def test_books_partial_submit_asks_to_test_saved_repair_before_deadline(tmp_path
         assert failed.text.startswith("ERROR:")
         repair = actions[6]
         episode.dispatch(repair["tool"], repair["arguments"], turn=19)
+        review = episode.dispatch("read_pipeline_file", {"path": "customer_totals.sql"}, turn=19)
+        assert "Test the saved draft order_totals.sql" in review.text
+        own_draft = episode.dispatch("read_pipeline_file", {"path": "order_totals.sql"}, turn=19)
+        assert "AVG(amount)" in own_draft.text
         partial = {"mode": "partial"}
         blocked = episode.dispatch("submit_pipeline", partial, turn=20)
         assert not blocked.submitted and "Test the newly saved SQL before partial submission: order_totals.sql" in blocked.text

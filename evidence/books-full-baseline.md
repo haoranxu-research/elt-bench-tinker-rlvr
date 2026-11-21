@@ -484,3 +484,17 @@ higher observed sales or with no priced sale. Run 07's saved inputs
 passed both checks. These checks inspect candidate outputs and source
 values only. They do not provide a scored-column comparison or disclose
 reference records.
+
+Run 12 (`03ff40a`) independently submitted all three files at the turn
+limit. Stage 1 was 1.0, Stage 2 was 2/3, and reward was 0.7833333333333333.
+Customers and publishers matched. On turn 31 the author result exposed
+218 dominated titles and an undefined-rate advisory. There was no time
+to repair. The saved author SQL ranked per-book average prices and returned
+zero when the 1992 publication-rate denominator was absent. Recorded
+tokens imply USD 0.03616686.
+
+The next revision asks the model to execute saved candidate SQL before
+more source-label lookups or review of previously tested files. It still
+allows reading the pending file for editing. It also checks the undefined
+publication rate on authors with no source book relationship, giving
+explicit feedback while a repair window remains.

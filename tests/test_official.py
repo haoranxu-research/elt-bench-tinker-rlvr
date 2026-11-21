@@ -456,12 +456,14 @@ def test_public_author_page_check_uses_source_relationships_and_candidate_flag()
         db.execute("CREATE SCHEMA books")
         db.execute("CREATE TABLE books.book AS SELECT 1 AS book_id, 100 AS num_pages")
         db.execute("CREATE TABLE books.book_author AS SELECT 10 AS author_id, 1 AS book_id")
-        db.execute("CREATE TABLE books.authors AS SELECT * FROM (VALUES (10, 0), (20, 0), (30, 1)) "
-                   "v(author_id, wrote_fewer_total_pages_than_the_average)")
+        db.execute("CREATE TABLE books.authors AS SELECT * FROM (VALUES (10, 0, 10), (20, 0, 0), (30, 1, NULL)) "
+                   "v(author_id, wrote_fewer_total_pages_than_the_average, per_book_published_1992)")
         backend._lookup_rows = lambda query: db.execute(query).fetchall()
         sources = {"book": ["book_id", "num_pages"], "book_author": ["author_id", "book_id"]}
-        assert backend.author_page_check(sources).startswith("1 authors with no related books")
-        db.execute("UPDATE books.authors SET wrote_fewer_total_pages_than_the_average = 1 WHERE author_id = 20")
+        issue = backend.author_page_check(sources)
+        assert issue.startswith("1 authors with no related books") and "denominator is zero" in issue
+        db.execute("UPDATE books.authors SET wrote_fewer_total_pages_than_the_average = 1, "
+                   "per_book_published_1992 = NULL WHERE author_id = 20")
         assert backend.author_page_check(sources) is None
         db.execute("UPDATE books.book SET num_pages = 0")
         db.execute("UPDATE books.authors SET wrote_fewer_total_pages_than_the_average = 0")

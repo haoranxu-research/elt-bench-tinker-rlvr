@@ -214,7 +214,10 @@ class ELTEpisodeState:
             untested = [name for name in self.task.transform_artifacts if name not in self._tested_files]
             if untested:
                 status += f" Still need successful tests: {', '.join(untested)}."
-        if self._tested_files and (turns <= 3 or calls <= 3 or attempts == 0):
+        if self._loaded and self._unattempted_files and min(turns, calls) >= 2 and attempts != 0:
+            queued = next(name for name in self.task.transform_artifacts if name in self._unattempted_files)
+            status += f" Test saved {queued} next using execute_pipeline."
+        elif self._tested_files and (turns <= 3 or calls <= 3 or attempts == 0):
             arguments = "{}" if len(self._tested_files) == len(self.task.transform_artifacts) else '{"mode":"partial"}'
             status += f" Use the next turn to call submit_pipeline with {arguments}."
         return status
@@ -251,6 +254,12 @@ class ELTEpisodeState:
                 arguments = {**arguments, "offset": str(offset)}
             elif type(offset) is not str:
                 raise PipelineError("offset must be a nonnegative character index up to 999999")
+        review_other_work = (name in {"read_task", "read_task_section", "inspect_values"}
+                             or (name == "read_pipeline_file" and arguments["path"] not in self._unattempted_files))
+        if self.task.partial_transforms and self._loaded and self._unattempted_files and review_other_work:
+            queued = next(filename for filename in self.task.transform_artifacts if filename in self._unattempted_files)
+            raise PipelineError(f"Test the saved draft {queued} before another review. "
+                                f"Call execute_pipeline with stage=transform and file={queued}.")
         if any(type(value) is not str for value in arguments.values()):
             raise PipelineError("tool arguments must be strings")
         if name == "read_task":

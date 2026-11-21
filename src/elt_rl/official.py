@@ -340,20 +340,24 @@ class SnowflakeBooksBackend:
         # authors with no book relationship are necessarily below the average.
         schema = f"{self.database}.BOOKS."
         flag = "CAST(o.wrote_fewer_total_pages_than_the_average AS VARCHAR)"
-        (failures,), = self._lookup_rows(
-            f"SELECT COUNT(*) FROM {schema}authors o WHERE NOT EXISTS "
-            f"(SELECT 1 FROM {schema}book_author ba WHERE ba.author_id = o.author_id) "
-            f"AND COALESCE(TRY_CAST({flag} AS DOUBLE), 0) <> 1 "
+        (failures, defined_rates), = self._lookup_rows(
+            f"SELECT COUNT(CASE WHEN COALESCE(TRY_CAST({flag} AS DOUBLE), 0) <> 1 "
             f"AND LOWER(COALESCE({flag}, '')) <> 'true' "
             f"AND EXISTS (SELECT 1 FROM {schema}book b JOIN {schema}book_author ba "
             "ON b.book_id = ba.book_id WHERE b.num_pages > 0) "
-            f"AND NOT EXISTS (SELECT 1 FROM {schema}book WHERE num_pages < 0)"
+            f"AND NOT EXISTS (SELECT 1 FROM {schema}book WHERE num_pages < 0) THEN 1 END), "
+            f"COUNT(o.per_book_published_1992) FROM {schema}authors o WHERE NOT EXISTS "
+            f"(SELECT 1 FROM {schema}book_author ba WHERE ba.author_id = o.author_id)"
         )
+        notes = []
         if failures:
-            return (f"{failures} authors with no related books are marked as not below the page average. "
-                    "Their page total is zero and some authors have positive page totals. "
-                    "Check the preserved author key, the input population of the average, and the final comparison.")
-        return None
+            notes.append(f"{failures} authors with no related books are marked as not below the page average. "
+                         "Their page total is zero and some authors have positive page totals. "
+                         "Check the preserved author key, the input population of the average, and the final comparison.")
+        if defined_rates:
+            notes.append(f"{defined_rates} authors with no related books have a defined 1992 publication rate. "
+                         "The denominator is zero for those authors, so the rate is undefined.")
+        return " ".join(notes) or None
 
     def customer_rate_check(self, sources: dict[str, list[str]]) -> str | None:
         required = {"cust_order": {"customer_id", "shipping_method_id"},
