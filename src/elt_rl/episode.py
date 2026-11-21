@@ -450,15 +450,11 @@ class ELTEpisodeState:
             if self.task.partial_transforms:
                 feedback = result + " Tested: " + ", ".join(names) + ". Submit on a later turn once ready."
                 if self.task.output_columns:
-                    from .official_sql import undeclared_rate_defaults
+                    from .official_sql import public_sql_review
 
                     for filename, sql in artifacts.items():
-                        names_with_defaults = undeclared_rate_defaults(
-                            sql, self.task.sections.get(filename.removesuffix(".sql"), ""))
-                        if names_with_defaults:
-                            feedback += (f"\n{filename}: Review these percentage columns: "
-                                         f"{', '.join(names_with_defaults)}. The public requirements do not specify "
-                                         "zero for an undefined rate. Check what happens when the denominator is missing.")
+                        for note in public_sql_review(sql, self.task.sections.get(filename.removesuffix(".sql"), "")):
+                            feedback += f"\n{filename}: {note}"
                 return feedback
             return result
         raise PipelineError("stage must be load or transform")

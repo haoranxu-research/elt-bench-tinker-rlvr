@@ -34,23 +34,28 @@ def _identifier_label(name: str) -> str:
     return "".join(ch for ch in name[:80] if ch.isalnum() or ch in "_$") or "(quoted identifier)"
 
 
-def undeclared_rate_defaults(sql: str, model_section: str) -> list[str]:
-    """Flag direct zero defaults where the public rate definition requests none."""
+def public_sql_review(sql: str, model_section: str) -> list[str]:
+    """Review SQL for common counting and rate pitfalls using public descriptions."""
     fields = (line.partition(": ") for line in model_section.splitlines())
-    described_rates = {
-        name.lower() for name, _, description in fields
-        if "percentage" in description.lower() and "null" not in description.lower()
-        and "default" not in description.lower()
+    rate_definitions = {
+        name.lower(): description.lower() for name, _, description in fields
+        if "percentage" in description.lower()
     }
-    if not described_rates:
-        return []
     query, = parse(sql, read="snowflake")
-    result = []
+    zero_defaults = []
+    rounded = []
     for projection in query.selects:
         name = projection.output_name.lower()
-        if name not in described_rates or not isinstance(projection, exp.Alias):
+        description = rate_definitions.get(name)
+        if not description or not isinstance(projection, exp.Alias):
             continue
         expression = projection.this
+        if isinstance(expression, exp.Round):
+            if "round" not in description:
+                rounded.append(name)
+            expression = expression.this
+        if "null" in description or "default" in description:
+            continue
         if isinstance(expression, exp.Case):
             defaults = [expression.args.get("default")]
         elif isinstance(expression, exp.Coalesce):
@@ -58,8 +63,28 @@ def undeclared_rate_defaults(sql: str, model_section: str) -> list[str]:
         else:
             continue
         if any(isinstance(value, exp.Literal) and value.is_number and value.to_py() == 0 for value in defaults):
-            result.append(name)
-    return result
+            zero_defaults.append(name)
+    feedback = []
+    if zero_defaults:
+        feedback.append(f"Review the zero defaults for {', '.join(zero_defaults)}. The public requirements "
+                        "do not specify zero for undefined rates. Check rows with a missing denominator.")
+    if rounded:
+        feedback.append(f"Review the rounding of {', '.join(rounded)}. The public requirements "
+                        "do not request rounding for these percentages.")
+    for count in query.find_all(exp.Count):
+        value = count.this
+        if not isinstance(value, exp.Distinct) or len(value.expressions) != 1:
+            continue
+        case = value.expressions[0]
+        if not isinstance(case, exp.Case):
+            continue
+        branches = [branch.args.get("true") for branch in case.args.get("ifs", [])]
+        branches.append(case.args.get("default"))
+        if all(branch is None or isinstance(branch, (exp.Literal, exp.Null, exp.Boolean)) for branch in branches):
+            feedback.append("COUNT(DISTINCT CASE ...) with constant results counts distinct branch values, "
+                            "so it cannot count qualifying rows. Check what is being counted.")
+            break
+    return feedback
 
 
 def safe_select(sql: str, raw_tables: frozenset[str]) -> str:

@@ -15,7 +15,7 @@ from elt_rl.books_setup import AIRBYTE_FIELDS, RUNTIME_FILES, bind_airbyte, stag
 from elt_rl.airbyte import AirbyteRun, select_streams, streams, terraform_plan
 from elt_rl.contracts import EpisodeConfig, Grade, PipelineError
 from elt_rl.episode import ELTEpisodeState
-from elt_rl.official_sql import safe_select, undeclared_rate_defaults
+from elt_rl.official_sql import public_sql_review, safe_select
 
 
 @pytest.mark.parametrize(("error", "message"), [
@@ -344,9 +344,10 @@ def test_lookup_values_are_scoped_and_escape_the_filter():
 def test_public_review_flags_undefined_rate_defaults_but_preserves_zero_numerator():
     query = """
         SELECT CASE WHEN total_books > 0 THEN 100.0 * eligible / total_books ELSE 0.0 END AS books_pct,
-               COALESCE(100.0 * matched / total_orders, 0) AS order_pct,
+               ROUND(COALESCE(100.0 * matched / total_orders, 0), 4) AS order_pct,
                SUM(CASE WHEN eligible > 0 THEN eligible ELSE 0 END) AS contributions,
-               COALESCE(publisher_rate, 0) AS publisher_pct
+               COALESCE(publisher_rate, 0) AS publisher_pct,
+               COUNT(DISTINCT CASE WHEN eligible > 0 THEN 1 END) AS existence
         FROM orders
     """
     public_definitions = (
@@ -355,7 +356,12 @@ def test_public_review_flags_undefined_rate_defaults_but_preserves_zero_numerato
         "contributions: The percentage of filtered contributions.\n"
         "publisher_pct: Percentage of eligible publishers, replace NULL values with 0.\n"
     )
-    assert undeclared_rate_defaults(query, public_definitions) == ["books_pct", "order_pct"]
+    defaults, rounding, counting = public_sql_review(query, public_definitions)
+    assert "books_pct, order_pct" in defaults and "publisher_pct" not in defaults
+    assert "order_pct" in rounding and "books_pct" not in rounding
+    assert "cannot count qualifying rows" in counting
+    independent_count = "SELECT COUNT(DISTINCT CASE WHEN eligible > 0 THEN order_id END) FROM orders"
+    assert not public_sql_review(independent_count, public_definitions)
 
 
 def test_local_books_date_format_translation_reports_the_file(monkeypatch):
