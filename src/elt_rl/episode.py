@@ -344,7 +344,12 @@ class ELTEpisodeState:
         return f"{path}, characters {start}–{end} of {len(content)}.{next_page}\n" + content[start:end]
 
     def compact_state(self, turn: int) -> str:
-        details = [self.task.instructions, self._list_workspace(), self._submission_status(turn)]
+        task_state = self.task.instructions
+        if self._loaded:
+            task_state = ("Source loading succeeded. Continue writing and executing the remaining Snowflake "
+                          "SELECT files against the loaded warehouse. Keep previously tested files unless "
+                          "a specific check identified a problem.")
+        details = [task_state, self._list_workspace(), self._submission_status(turn)]
         if self.warehouse_columns:
             details.append("Actual warehouse columns:\n" + self.catalog_text())
         if self.source_labels:
@@ -352,7 +357,8 @@ class ELTEpisodeState:
         details.extend(f"{name}:\n{section}" for name, section in self.task.sections.items())
         if self.latest_error:
             details.append("Most recent tool error:\n" + self.latest_error)
-        return "\n\n".join(details) + "\nSaved files are unchanged. Use read_pipeline_file for their exact contents."
+        details.extend(f"{filename}: {problem}" for filename, problem in self._failed_public_checks.items())
+        return "\n\n".join(details) + "\nSaved files are unchanged."
 
     def recovery_action(self) -> str:
         if not self._inspected_task:

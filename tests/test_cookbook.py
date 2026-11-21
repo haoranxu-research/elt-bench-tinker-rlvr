@@ -255,6 +255,8 @@ def test_books_interrupted_first_sql_resumes_from_loaded_state(tmp_path, monkeyp
                                          extra={"stop_reason": "length"})
             prompt = bytes(interrupted.next_observation.to_ints()).decode()
             assert "Your first action is read_task" not in prompt
+            assert "Source loading succeeded." in prompt
+            assert "Use read_pipeline_file for their exact contents." not in prompt
             assert "The interrupted action made no changes. Respond with a single tool call." in prompt
             assert "The source data is loaded. Write only customer_totals.sql with write_pipeline_file." in prompt
             assert "Recovery renderer" in prompt
