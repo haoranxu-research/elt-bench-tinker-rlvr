@@ -5,7 +5,7 @@
 | Requirement | Executed evidence | Status |
 | --- | --- | --- |
 | Credential-free, multi-turn ELT | The SQLite trace repaired a failed transform, submitted from a later turn, and earned 1.0 on a fresh replay. The test suite covers faulty input, failed transforms, partial and unsubmitted scores, and cleanup. | Complete |
-| Hosted agent submission with pinned books grading | Qwen3.5-9B independently authored SQL, submitted, and ran both stages on DuckDB. See the linked run table for exact scores. | Full model-output correctness pending |
+| Hosted agent submission with pinned books grading | Qwen3.6-35B-A3B independently authored two exact outputs on DuckDB. Stage 1 = 1.0, Stage 2 = 2/3, reward = 0.7833333. | Authors output and full correctness pending |
 | Credentialed official task | The November 21 Qwen rollout loaded all 84,337 expected rows into Snowflake. It ended unsubmitted after 24 turns with reward 0. Neither evaluator ran against Snowflake. | Live load verified. Scored agent submission pending. |
 | Real Tinker RL update | A previous pilot completed one optimizer step from execution-derived SQLite rewards and verified a changed probe and matching checkpoint metadata. | Complete |
 | Submission materials | The repository records the current results and reproduction commands. | Final baseline handoff pending |

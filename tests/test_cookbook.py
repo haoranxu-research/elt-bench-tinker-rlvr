@@ -233,7 +233,13 @@ def test_books_submission_reserve_keeps_one_explicit_action(tmp_path, boundary, 
         assert trajectory.transitions[-2].logs["tool_calls_skipped_for_submission"] == 1
 
 
-def test_books_interrupted_first_sql_resumes_from_loaded_state(tmp_path):
+def test_books_interrupted_first_sql_resumes_from_loaded_state(tmp_path, monkeypatch):
+    class RecoveryRenderer(ScriptedRenderer):
+        def build_generation_prompt(self, messages):
+            return super().build_generation_prompt([*messages, {"role": "user", "content": "Recovery renderer"}])
+
+    monkeypatch.setattr("elt_rl.cookbook.finalization_renderer", lambda _: RecoveryRenderer())
+
     async def run():
         task = replace(local_task(), task_id="books", partial_transforms=True)
         renderer = cast(Renderer, ScriptedRenderer())
@@ -251,9 +257,14 @@ def test_books_interrupted_first_sql_resumes_from_loaded_state(tmp_path):
             assert "Your first action is read_task" not in prompt
             assert "The interrupted action made no changes. Respond with a single tool call." in prompt
             assert "The source data is loaded. Write only customer_totals.sql with write_pipeline_file." in prompt
+            assert "Recovery renderer" in prompt
             assert interrupted.metrics["interrupted_action_recovery"] == 1 and not interrupted.episode_done
             assert not (builder.episodes[0].artifact_dir / "customer_totals.sql").exists()
-            await env.step(list(json.dumps([actions[3]]).encode()))
+            read = [{"tool": "list_workspace", "arguments": {}}]
+            after_read = await env.step(list(json.dumps(read).encode()))
+            assert "Recovery renderer" in bytes(after_read.next_observation.to_ints()).decode()
+            after_save = await env.step(list(json.dumps([actions[3]]).encode()))
+            assert "Recovery renderer" not in bytes(after_save.next_observation.to_ints()).decode()
             interrupted = await env.step([32] * 4096, extra={"stop_reason": "length"})
             prompt = bytes(interrupted.next_observation.to_ints()).decode()
             assert "The source data is loaded. Test saved customer_totals.sql" in prompt

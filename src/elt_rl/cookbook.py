@@ -213,8 +213,16 @@ class BooksTokenEnv(ELTTokenEnv):
         self.episode = message_env._episode
         self.reserve = reserve
         self.final_renderer = finalization_renderer(renderer)
+        self.pending_recovery_action: str | None = None
         self.tokens_spent = 0
         self.turns_used = 0
+
+    async def _render_in_thread(self, messages: list[Message], **kwargs):
+        if self.pending_recovery_action is not None:
+            if self.episode.recovery_action() == self.pending_recovery_action:
+                return await asyncio.to_thread(self.final_renderer.build_generation_prompt, messages, **kwargs)
+            self.pending_recovery_action = None
+        return await super()._render_in_thread(messages, **kwargs)
 
     @property
     def sampled_left(self) -> int:
@@ -258,6 +266,7 @@ class BooksTokenEnv(ELTTokenEnv):
         if recover_interrupted:
             self.episode.latest_error = "The previous action was incomplete. It was not executed. Use a shorter tool call."
             self.books_messages.turn = self.turns_used
+            self.pending_recovery_action = self.episode.recovery_action()
         desired = min(working_left, self.rollout_limits.max_turn_tokens)
         if not (last_turn or last_call or low_tokens) and (
             context_full or recover_interrupted
@@ -266,10 +275,7 @@ class BooksTokenEnv(ELTTokenEnv):
             previous_length = result.next_observation.length
             previous_history = self.books_messages.history
             messages = self.books_messages.compact(interrupted=recover_interrupted)
-            if recover_interrupted:
-                compact = await asyncio.to_thread(self.final_renderer.build_generation_prompt, messages)
-            else:
-                compact = await self._render_in_thread(messages)
+            compact = await self._render_in_thread(messages)
             if self.context_room(compact.length) >= 2 and (context_full or recover_interrupted or compact.length < previous_length):
                 self._finished = False
                 metrics = {key: value for key, value in result.metrics.items() if not key.startswith("stop/")}

@@ -218,3 +218,38 @@ bound is USD 0.23377920. The command adds `--context-cap 14336`, sets
 `--budget-usd 0.24`, and writes to
 `runs/books-full-baseline/stronger-recovery-preflight`. No follow-up sampling
 session was launched.
+
+## Second authorized 35B rehearsal
+
+Run `runs/books-full-baseline/stronger-02` used revision `52438cf`, with
+`--hosted --allow-paid --model Qwen/Qwen3.6-35B-A3B --renderer qwen3_5
+--context-cap 14336 --budget-usd 0.24` and the same checkout and assets.
+The model loaded all 15 tables and 84,337 rows, wrote and tested
+`publishers.sql` and `customers.sql`, and called `submit_pipeline` itself
+on turn 16. Stage 1 was 1.0. Stage 2 matched publishers and customers
+exactly and could not find an authors output. Stage 2 was 2/3 and the
+environment reward was 0.7833333333333333.
+
+Turns 9, 11, and 13 hit 4,096 sampled tokens without completing an author
+write. The recovery prompts prevented the restart loop from the prior run.
+The model used the recovery turns to read the public author description or
+request the still-missing file. The next prompt restored thinking even though
+the author write remained pending. Turn 15 exhausted the last 953 working
+tokens. The model then used 27 of the reserved 54 tokens to submit both
+tested files. The audit matched 16 prompts and responses, all 20 dispatched
+tool calls, all 19 eligible receipts, and the persisted SQL. It verified
+20,453 sampled, 44,800 cached input, and 13,081 uncached input tokens.
+The usage estimate is USD 0.037223205. No billing rows were posted when
+checked. No Snowflake compute, training, or second paid session ran.
+
+The offline follow-up keeps thinking disabled across read-only turns until
+the pending recovery action changes. An offline replay of the first ten
+actual model responses confirmed that the original next prompt restored
+thinking and the revised prompt keeps recovery mode active. It retained
+both tested files and the author write as the pending action. The replay
+used local DuckDB and issued no sampling or evaluator requests. The full
+suite ran with `pytest -q --tb=short --basetemp .venv/books-persistent-recovery`
+using the real renderer and the local Terraform provider. Result was
+93 passed in 35.12 seconds. The revised recovery mode still needs hosted
+verification. The fresh read-only preflight in
+`stronger-persistent-preflight` passed at the same USD 0.23377920 upper bound.
