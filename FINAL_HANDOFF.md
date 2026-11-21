@@ -5,12 +5,13 @@
 | Requirement | Executed evidence | Status |
 | --- | --- | --- |
 | Credential-free, multi-turn ELT | The SQLite trace repaired a failed transform, submitted from a later turn, and earned 1.0 on a fresh replay. The test suite covers faulty input, failed transforms, partial and unsubmitted scores, and cleanup. | Complete |
-| Hosted agent submission with pinned books grading | Qwen3.5-9B repaired and submitted two model-authored SQL files on DuckDB. Stage 1 = 1.0, Stage 2 = 0.0, reward = 0.35. | Complete on the local destination |
+| Hosted agent submission with pinned books grading | Qwen3.5-9B independently authored SQL, submitted, and ran both stages on DuckDB. See the linked run table for exact scores. | Full model-output correctness pending |
 | Credentialed official task | The November 21 Qwen rollout loaded all 84,337 expected rows into Snowflake. It ended unsubmitted after 24 turns with reward 0. Neither evaluator ran against Snowflake. | Live load verified. Scored agent submission pending. |
 | Real Tinker RL update | A previous pilot completed one optimizer step from execution-derived SQLite rewards and verified a changed probe and matching checkpoint metadata. | Complete |
-| Submission materials | The repository, reproduction guide, design, and professor summary are ready for review. | Local deliverables complete |
+| Submission materials | The repository records the current results and reproduction commands. | Final baseline handoff pending |
 
 [Latest credentialed rollout](evidence/books-snowflake-final.md) ·
+[Hosted model correctness and diagnostics](evidence/books-full-baseline.md) ·
 [Hosted submission and official preflight](evidence/books-context-completion.md) ·
 [Tinker optimizer evidence](evidence/tinker-pilot.md) ·
 [Design](DESIGN.md) · [Professor-facing summary](PROFESSOR_SUMMARY.md)
@@ -55,7 +56,8 @@ With context compaction and live column inspection, the hosted
 tested publisher and customer SQL files. Both pinned evaluators ran
 through DuckDB. Stage 1 was 1.0, Stage 2 was 0.0, and the reward was
 0.35. The model spent 27 of the 54 reserved tokens on its final
-tool call. One paid rehearsal met the target and no repeats ran.
+tool call. That rehearsal verified submission and grading. The three output
+models still had to pass the same evaluator.
 [Trajectory, evaluators, and usage](evidence/books-context-completion.md)
 
 Executed command for the local hosted run:
@@ -73,13 +75,18 @@ tokens, and 8,192 sampled tokens. Measured usage implies **USD
 
 ## Final live command
 
+This command records the previously prepared profile. Launch is gated on a
+model-driven local score of 1.0 at both stages, a matching live configuration,
+fresh warehouse checks, and separate authorization.
+
 The authoritative model entry point is `elt_rl.run official-rollout`.
 The pending candidate is the base `Qwen/Qwen3.5-9B` with its pinned
 no-thinking renderer. The runner writes exact prompt token IDs and
 sampled actions to an ignored run directory. It permits one group member,
 24 turns, 32 tool calls, one explicit grading replay, and a 40-minute
-rollout timeout. The model submission and evaluator workflow passed on
-DuckDB. Snowflake credentials, warehouse metadata, direct grants, and
+rollout timeout. Model-authored submissions reached both graders on DuckDB.
+The latest correctness results are in the hosted run table above. Snowflake
+credentials, warehouse metadata, direct grants, and
 the launch budget passed read-only checks. The cloud run awaits separate
 authorization for Snowflake and Tinker.
 [Official setup](LIVE_SETUP.md#official-snowflake-books)
