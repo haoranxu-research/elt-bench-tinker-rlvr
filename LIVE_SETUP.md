@@ -520,6 +520,12 @@ the matching hourly windows. Keep delayed metering pending until it appears.
 The warehouse view reports usage credits, and cloud-services credits can
 differ from billed credits. [Warehouse metering](https://docs.snowflake.com/en/sql-reference/account-usage/warehouse_metering_history)
 
+For the proposed Qwen3.5-9B rollout, use the pinned no-thinking renderer
+and cache the public tokenizer on S before launch. The account's
+read-only capabilities response confirms base-model sampling availability.
+The candidate rehearsal and monitor requirements are recorded separately.
+[Model readiness and administrator checks](evidence/books-model-readiness.md)
+
 The second November 20 credentialed attempt loaded all 15 streams into
 Snowflake. Validation of the sampled transformations blocked submission.
 The Airbyte worker override in `deploy/books-airbyte-values.yaml` limits

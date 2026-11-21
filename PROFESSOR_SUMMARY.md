@@ -34,8 +34,11 @@ one absent model received Stage 2 credit for two of three outputs.
 
 The final interaction workflow separates write, execute and submit,
 identifies SQL errors by file, and supports explicit partial submission
-of tested artifacts. The pinned grader and reward weights are unchanged.
-The agent used only whole-batch transforms and exhausted its attempts
-before submitting. The run's database and Airbyte resources were removed.
+of tested artifacts. The follow-up preserves completed files across
+batch failures and shows which files can be submitted before the budget
+expires. The pinned grader and reward weights are unchanged. The
+November 21 run's database and Airbyte resources were removed. A graded
+model submission on Snowflake remains pending.
 [Design](DESIGN.md) [Latest credentialed evidence](evidence/books-snowflake-final.md)
+[Model and protocol evidence](evidence/books-model-readiness.md)
 [Final reproducibility and acceptance status](FINAL_HANDOFF.md)

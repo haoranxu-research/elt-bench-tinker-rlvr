@@ -10,10 +10,16 @@
 | Submission materials | The repository, reproduction guide, design, and professor summary are ready for review. | Local deliverables complete |
 
 [Latest credentialed rollout](evidence/books-snowflake-final.md) ·
+[Current model and submission preflight](evidence/books-model-readiness.md) ·
 [Tinker optimizer evidence](evidence/tinker-pilot.md) ·
 [Design](DESIGN.md) · [Professor-facing summary](PROFESSOR_SUMMARY.md)
 
 ## Final engineering verification
+
+The fresh probe matched 84,337 rows across all 15 pinned tables in local
+PostgreSQL. All six Airbyte jobs succeeded on their first attempt and
+the probe cleaned up its resources.
+[Latest preflight and model evidence](evidence/books-model-readiness.md)
 
 The host persists model-authored SQL, returns file-level validation and
 warehouse errors, and allows an individual saved file to be tested.
@@ -44,11 +50,12 @@ skipped all model queries. [Commands and evidence](evidence/books-final-audit.md
 ## Final live command
 
 The authoritative model entry point is `elt_rl.run official-rollout`.
-The November 21 command used
-the baseline Qwen3.5-4B with the pinned renderer, one group member, at most
-24 turns and 32 tool calls, and one explicit submission replay. Use a new
-private output path on S. The local wrapper records exact prompt tokens in
-the private run directory. [Official setup](LIVE_SETUP.md#official-snowflake-books)
+The pending candidate is the base `Qwen/Qwen3.5-9B` with its pinned
+no-thinking renderer. The runner writes exact prompt token IDs and
+sampled actions to an ignored run directory. It permits one group member,
+24 turns, 32 tool calls, and one explicit grading replay. Verify model
+readiness and warehouse allowance and obtain approval before running this
+command. [Official setup](LIVE_SETUP.md#official-snowflake-books)
 
 ```powershell
 $private = Join-Path $env:LOCALAPPDATA 'ELTBenchBooks'
@@ -60,18 +67,23 @@ $tmp = (New-Item -ItemType Directory -Force runs/books-final-tmp).FullName
 $env:TEMP = $tmp
 $env:TMP = $tmp
 $env:CHECKPOINT_DISABLE = '1'
+$env:HF_HOME = (Resolve-Path runs/books-offline-model/hf).Path
 $env:HF_HUB_OFFLINE = '1'
 $env:TRANSFORMERS_OFFLINE = '1'
-.\.venv\Scripts\python.exe runs/launch-books-final.py official-rollout --allow-paid --allow-warehouse --budget-usd 0.15 --model Qwen/Qwen3.5-4B --renderer qwen3_5_disable_thinking --out runs/books-official-final 2>&1 | ForEach-Object ToString | Tee-Object runs/books-official-final-console.txt
+.\.venv\Scripts\python.exe -c 'from pathlib import Path; import sys; sys.path.append(str(Path(sys.base_prefix)/""Lib""/""site-packages"")); from elt_rl.run import main; raise SystemExit(main())' official-rollout --allow-paid --allow-warehouse --budget-usd 0.15 --model Qwen/Qwen3.5-9B --renderer qwen3_5_disable_thinking --out runs/books-official-qwen9b-001 2>&1 | ForEach-Object ToString | Tee-Object runs/books-official-qwen9b-001-console.txt
 ```
 
 The runner checks current rates before creating a Tinker session. The
-uncached worst-case token bound at checked public rates is **USD 0.13799424**.
-The prior Snowflake attempt used approximately **0.32 credits** through load
-and agent execution. Two comparable passes would use about **0.64 credits**;
-a continuously active standard Gen1 X-Small warehouse for 60 minutes uses
-1 credit. Allow for resumed periods, grading, and cleanup. These are planning
-estimates. The account's actual dollar rate and new usage are unverified.
+uncached worst-case token bound for Qwen3.5-9B at checked public rates is
+**USD 0.124575744**. Previous Snowflake runs used approximately 0.25–0.32
+credits to load and execute without grading. Two comparable passes give
+**0.50–0.64 credits** as a planning range before headroom for grading and
+cleanup. A continuously active standard Gen1 X-Small warehouse uses
+1 credit in 60 minutes. The refreshed administrator console confirmed
+attachment and approximately 0.79 credits until immediate suspension.
+That covers the estimated compute range with limited grading headroom.
+It would not cover uninterrupted use for the full timeout.
+[Read-only check and administrator SQL](evidence/books-model-readiness.md#read-only-cloud-checks)
 [Tinker rate card](https://tinker-docs.thinkingmachines.ai/tinker/models.json) ·
 [Snowflake warehouse billing](https://docs.snowflake.com/en/user-guide/warehouses-overview#impact-on-credit-usage-and-billing)
 

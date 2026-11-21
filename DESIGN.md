@@ -15,7 +15,11 @@ execution step. The workspace lists missing, saved, and tested files.
 The agent can execute one saved SQL file to isolate an error. Changing a
 file invalidates its earlier test. Complete submission requires all
 three current files tested on earlier turns. Explicit partial submission
-replays just the current tested files. The official grader gives absent
+replays just the current tested files. If a Snowflake batch fails after
+writing some outputs, the files it completed remain eligible. Each tool
+receipt shows the remaining turn, tool-call, and warehouse-attempt
+budgets. The last turn and last tool call are reserved for explicit
+submission. The official grader gives absent
 models zero Stage 2 credit. The run stores the candidate files and a
 separate submitted-file manifest.
 
@@ -23,8 +27,10 @@ An episode proceeds from task inspection to source selection and load, then
 to transformations. The model can repair an error and rerun the stage.
 Editing invalidates earlier execution evidence. Submitting requires a
 successful test of the current artifacts in an earlier turn. A rollout ends
-on accepted submission, an action without tools, a terminal parse error, or a
-budget limit. An unfinished rollout earns zero.
+on accepted submission, a terminal parse error, or a budget limit. An
+action without tools normally ends the episode. The books agent receives
+one reminder to use a tool when there is budget for another turn. An
+unfinished rollout earns zero.
 
 ## Execution and grading
 

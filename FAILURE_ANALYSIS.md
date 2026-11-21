@@ -9,6 +9,16 @@ which put SQL in actions that do not write files. The final workflow adds
 single-file execution and explicit partial submission. This historical
 trace still ends with reward zero.
 
+The November 21 trace exposed a second protocol defect. When the third
+statement of a batch failed, feedback omitted the two files Snowflake had
+already materialized. The agent also reached the final turn with no
+current tested files in its observation and no explicit budget reminder.
+The follow-up preserves completed files, prints the remaining budget and
+submission eligibility, and reserves the final action for explicit
+submission. The trace also shows real SQL errors and repeated batch
+execution. It does not isolate the effect of model size.
+[Model and protocol evidence](evidence/books-model-readiness.md)
+
 ## November 21 follow-up
 
 The final authorized rollout loaded all 15 tables and 84,337 rows.

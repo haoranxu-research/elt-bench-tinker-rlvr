@@ -197,8 +197,9 @@ It used the staged `books` inputs and a local SQL transport.
 
 See the [recorded launch procedure](FINAL_HANDOFF.md#final-live-command).
 The official tools support testing a single saved SQL file and explicitly
-submitting the files that passed. Grading still uses a fresh warehouse
-and the official Stage 1 gate. [Final audit](evidence/books-final-audit.md)
+submitting the files that passed. Each observation shows the remaining
+budget and current tested files. Grading uses a fresh warehouse and the
+official Stage 1 gate. [Model and protocol evidence](evidence/books-model-readiness.md)
 
 Follow the [official setup and cost guide](LIVE_SETUP.md#official-snowflake-books)
 to stage the assets, start the source services, publish the Airbyte connector,
@@ -225,7 +226,7 @@ python -m pip install -e '.[official,cookbook]'
 
 Set `ELT_SNOWFLAKE_CREDENTIAL_JSON` and `TINKER_API_KEY` through the private
 environment or ignored local `.env`. One backend permits two load attempts
-and four warehouse transform attempts. Submission allows one separate replay.
+and seven warehouse transform attempts. Submission allows one separate replay.
 The runner checks the Tinker token estimate. The Snowflake warehouse has a
 separate budget and resource monitor.
 
