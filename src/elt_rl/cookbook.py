@@ -23,6 +23,7 @@ from .episode import BOOKS_INSTRUCTION, BOOKS_REQUEST, INITIAL_INSTRUCTION, ELTE
 from .local import local_task
 
 logger = logging.getLogger(__name__)
+CONTEXT_MARGIN = 32
 
 
 @dataclass
@@ -164,6 +165,12 @@ class ELTMessageEnv(AgentToolMessageEnv):
         self.history = messages
         return self.history
 
+    def compact(self) -> list[Message]:
+        self.history = [*self.initial_messages, {"role": "user", "content":
+                        "Working state after context compaction. Continue from this state without restarting:\n"
+                        + self._episode.compact_state(self.turn)}]
+        return self.history
+
 
 class ELTTokenEnv(EnvFromMessageEnv):
     """Keep token-level termination final even when no message was dispatched."""
@@ -200,9 +207,17 @@ class BooksTokenEnv(ELTTokenEnv):
     def sampled_left(self) -> int:
         return self.rollout_limits.max_sampled_tokens - self.tokens_spent
 
+    def _exceeds_context_limit(self, observation_length: int) -> bool:
+        # The per-request cap below uses actual room and sampled tokens left.
+        return self.context_room(observation_length) < 2
+
+    def context_room(self, prompt_tokens: int) -> int:
+        return self.rollout_limits.max_trajectory_tokens - prompt_tokens - CONTEXT_MARGIN
+
     async def sample(self, policy, observation, stop, max_tokens=None):
         available = self.reserve if self.episode.finalizing else self.sampled_left - self.reserve
-        cap = min(available, max_tokens) if max_tokens is not None else available
+        cap = min(available, self.context_room(observation.length),
+                  max_tokens if max_tokens is not None else self.rollout_limits.max_turn_tokens)
         if cap <= 0 or (self.episode.finalizing and cap < self.reserve):
             raise RuntimeError("rollout did not preserve the reserved submission request")
         response = await policy(observation, stop, max_tokens=cap)
@@ -224,6 +239,26 @@ class BooksTokenEnv(ELTTokenEnv):
         last_turn = self.turns_used + 1 >= self.rollout_limits.max_turns
         last_call = self.books_messages.remaining_tool_calls <= 1
         low_tokens = self.sampled_left <= self.reserve + 1
+        working_left = self.sampled_left - self.reserve
+        recover_interrupted = (interrupted and not self.episode.tested_files and not (last_turn or last_call)
+                               and working_left >= 128)
+        if recover_interrupted:
+            self.episode.latest_error = "The previous action was incomplete. It was not executed. Use a shorter tool call."
+            self.books_messages.turn = self.turns_used
+        desired = min(working_left, self.rollout_limits.max_turn_tokens)
+        if not (last_turn or last_call or low_tokens) and (
+            context_full or recover_interrupted
+            or (not result.episode_done and self.context_room(result.next_observation.length) < desired)
+        ):
+            previous_length = result.next_observation.length
+            previous_history = self.books_messages.history
+            compact = await self._render_in_thread(self.books_messages.compact())
+            if self.context_room(compact.length) >= 2 and (context_full or recover_interrupted or compact.length < previous_length):
+                self._finished = False
+                metrics = {key: value for key, value in result.metrics.items() if not key.startswith("stop/")}
+                metrics.update(context_compacted=1, compact_prompt_tokens=compact.length)
+                return types.StepResult(0.0, False, compact, self._base_stop_condition, metrics=metrics, logs=result.logs)
+            self.books_messages.history = previous_history
         if not (interrupted or context_full or last_turn or last_call or low_tokens):
             return result
         if not self.episode.tested_files or self.turns_used >= self.rollout_limits.max_turns:
@@ -234,7 +269,7 @@ class BooksTokenEnv(ELTTokenEnv):
             return result
         messages = self.books_messages.begin_finalization(self.renderer, self.turns_used, self.reserve)
         observation = await self._render_in_thread(messages)
-        if observation.length + self.reserve > self.rollout_limits.max_trajectory_tokens:
+        if self.context_room(observation.length) < self.reserve:
             raise RuntimeError("submission prompt exceeds the configured context budget")
         self._finished = False
         metrics = {key: value for key, value in result.metrics.items() if not key.startswith("stop/")}

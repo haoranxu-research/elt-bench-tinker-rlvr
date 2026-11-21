@@ -94,8 +94,12 @@ def _source_sections(root: Path, public_config: dict) -> dict[str, str]:
             with (root / "elt-bench" / "schemas" / "books" / f"{name}.csv").open(
                 encoding="utf-8-sig", newline="",
             ) as file:
-                fields = [item["column_name"].strip() for item in csv.DictReader(file)]
-            lines.append(f"{name}({', '.join(fields)})")
+                fields = list(csv.DictReader(file))
+            lines.append(f"{name}({', '.join(item['column_name'].strip() for item in fields)})")
+            for item in fields:
+                mapping = re.search(r"maps to (\w+)\s*\(\s*(\w+)\s*\)", item["column_description"], re.IGNORECASE)
+                if mapping:
+                    lines.append(f"{name}.{item['column_name'].strip()} -> {mapping[1]}." + mapping[2])
         sections[group] = "\n".join(lines)
     model = _read_yaml(root / "elt-bench" / "snowflake" / "books" / "data_model.yaml")
     for output in model["models"]:
@@ -257,6 +261,23 @@ class SnowflakeBooksBackend:
         ])
         allowed = self.raw_tables | set(MODELS)
         return ", ".join(f"{name.lower()}={count}" for name, count in rows if name.lower() in allowed) or "(empty warehouse)"
+
+    def columns(self) -> dict[str, list[str]]:
+        if not self.created:
+            return {}
+        rows = self._run_sql([
+            f"SELECT TABLE_NAME, COLUMN_NAME FROM {self.database}.INFORMATION_SCHEMA.COLUMNS "
+            "WHERE TABLE_SCHEMA = 'BOOKS' ORDER BY TABLE_NAME, ORDINAL_POSITION"
+        ])
+        return self._column_catalog(rows)
+
+    def _column_catalog(self, rows) -> dict[str, list[str]]:
+        tables = {}
+        allowed = self.raw_tables | set(MODELS)
+        for table, column in rows:
+            if table.lower() in allowed:
+                tables.setdefault(table.lower(), []).append(column.lower())
+        return tables
 
     def _clear(self) -> None:
         if self.airbyte:

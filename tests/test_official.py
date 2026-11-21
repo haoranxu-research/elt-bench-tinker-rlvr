@@ -68,6 +68,8 @@ def test_official_books_public_task_and_airbyte_plan(checkout, tmp_path, monkeyp
     public_task = task.instructions + "\n".join(task.sections.values())
     assert "host-password-secret" not in public_task and "host-airbyte-secret" not in public_task
     assert len(task.sections) == 8 and task.task_id == "books"
+    assert "book.language_id -> book_language.language_id" in task.sections["mongodb"]
+    assert "book_author.book_id -> book.book_id" in task.sections["custom_api"]
     available = streams(public)
     manifest = json.dumps({"sources": {group: list(tables) for group, tables in available.items()}})
     selected = select_streams(manifest, available)
@@ -732,6 +734,8 @@ def test_official_episode_calls_two_isolated_warehouse_replays(checkout, tmp_pat
                 databases.remove(sql.split()[-1])
 
         def fetchall(self):
+            if ".INFORMATION_SCHEMA.COLUMNS " in statements[-1]:
+                return [("AUTHOR", "AUTHOR_ID"), ("AUTHOR", "AUTHOR_NAME"), ("PRIVATE_TABLE", "SECRET")]
             return [("AUTHOR", 7)]
 
     def provision(run, main_tf, plan, username, password):
@@ -752,7 +756,10 @@ def test_official_episode_calls_two_isolated_warehouse_replays(checkout, tmp_pat
         assert "Official ELT-Bench" in call("read_task", 1).text
         assert "author(" in call("read_task_section", 2, section="mongodb").text
         call("write_pipeline_file", 3, path="load.json", content='{"sources":{"mongodb":["author"]}}')
-        assert "author=7" in call("execute_pipeline", 4, stage="load").text
+        loaded = call("execute_pipeline", 4, stage="load").text
+        assert "author=7" in loaded and "author(author_id, author_name)" in loaded
+        assert "SECRET" not in loaded
+        assert "author(author_id, author_name)" in call("inspect_warehouse", 4, table="author").text
         for turn, name in enumerate(official.MODELS, start=5):
             call("write_pipeline_file", turn, path=f"{name}.sql", content="SELECT * FROM author")
         assert "Snowflake transform finished" in call("execute_pipeline", 8, stage="transform").text

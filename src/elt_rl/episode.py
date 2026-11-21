@@ -47,6 +47,10 @@ TOOLS = {
 
 BOOKS_TOOLS = {
     **TOOLS,
+    "inspect_warehouse": ToolSpec("Show actual materialized tables and columns. Pass table for one table.",
+                                   optional=("table",)),
+    "read_pipeline_file": ToolSpec("Read saved SQL. Use the next offset from the response for a long file.",
+                                   ("path",), ("offset",)),
     "execute_pipeline": ToolSpec(
         "Load saved load.json with stage=load, optionally specifying file=load.json. To test one saved SQL file, pass "
         "stage=transform and file set to that filename. An omitted file tests the complete batch.",
@@ -67,7 +71,8 @@ INITIAL_INSTRUCTION = (
 BOOKS_INSTRUCTION = (
     "Use tools to complete the ELT task. Start with read_task. Save load.json with write_pipeline_file, "
     "wait for a successful save receipt, then execute_pipeline with stage=load. "
-    "Use bare filenames for every tool, without directory prefixes. Read the relevant source and model sections. "
+    "Use bare filenames. Inspect actual warehouse columns and read the relevant model and relationship sections before writing SQL. "
+    "Start with one short independent transformation and get it tested. Check each join key against the schema. "
     "For each model, use write_pipeline_file(path, content) to save the full SQL query, then test just "
     "that file with execute_pipeline(stage=transform, file=filename). Rewrite the named file when it fails. "
     "Only write_pipeline_file accepts SQL text. Follow the remaining budget and tested files in tool feedback. "
@@ -113,6 +118,8 @@ class ELTEpisodeState:
         self.submitted_files: tuple[str, ...] = ()
         self.finalizing = False
         self.sampled_tokens_left: tuple[int, int] | None = None
+        self.warehouse_columns: dict[str, list[str]] = {}
+        self.latest_error = ""
 
     @property
     def tested_files(self) -> tuple[str, ...]:
@@ -158,6 +165,7 @@ class ELTEpisodeState:
                 value = self._call(name, arguments, turn)
             except PipelineError as exc:
                 value = f"ERROR: {exc}"
+                self.latest_error = value[:1100]
             if self.task.partial_transforms and self._grade is None:
                 budget = "\n" + self._submission_status(turn)
                 room = max(0, self.config.max_output_chars - len(budget))
@@ -221,7 +229,8 @@ class ELTEpisodeState:
             "read_task_section": self._read_task_section,
             "write_pipeline_file": self._write,
             "execute_pipeline": lambda stage, file=None: self._execute(stage, turn, file),
-            "inspect_warehouse": self.backend.inspect,
+            "inspect_warehouse": self._inspect_warehouse,
+            "read_pipeline_file": self._read_pipeline_file,
             "submit_pipeline": lambda mode="complete": self._submit(turn, mode),
         }
         return handlers[name](**arguments)
@@ -263,6 +272,38 @@ class ELTEpisodeState:
         if section not in self.task.sections:
             raise PipelineError("unknown task section")
         return self.task.sections[section]
+
+    def _inspect_warehouse(self, table: str | None = None) -> str:
+        if not self.task.load_streams:
+            return self.backend.inspect()
+        self.warehouse_columns = self.backend.columns() if self._loaded else {}
+        if table is not None:
+            names = self.warehouse_columns.get(table.lower())
+            if not names:
+                raise PipelineError("table is not materialized in the episode warehouse")
+            return f"{table.lower()}({', '.join(names)})"
+        return self.backend.inspect() + "\n" + self.catalog_text()
+
+    def catalog_text(self) -> str:
+        return "\n".join(f"{name}({', '.join(columns)})" for name, columns in self.warehouse_columns.items())
+
+    def _read_pipeline_file(self, path: str, offset: str = "0") -> str:
+        if path not in self._allowed or not offset.isdecimal() or len(offset) > 6:
+            raise PipelineError("use an approved saved filename and a decimal character offset")
+        content = self._read((path,))[path]
+        start = int(offset)
+        end = min(start + 1250, len(content))
+        next_page = f" Next offset: {end}." if end < len(content) else ""
+        return f"{path}, characters {start}–{end} of {len(content)}.{next_page}\n" + content[start:end]
+
+    def compact_state(self, turn: int) -> str:
+        details = [self.task.instructions, self._list_workspace(), self._submission_status(turn)]
+        if self.warehouse_columns:
+            details.append("Actual warehouse columns:\n" + self.catalog_text())
+        details.extend(f"{name}:\n{section}" for name, section in self.task.sections.items())
+        if self.latest_error:
+            details.append("Most recent tool error:\n" + self.latest_error)
+        return "\n\n".join(details) + "\nSaved files are unchanged. Use read_pipeline_file for their exact contents."
 
     @property
     def _allowed(self) -> tuple[str, ...]:
@@ -308,6 +349,7 @@ class ELTEpisodeState:
         if path in self.task.load_artifacts:
             self._loaded = False
             self._tested_files.clear()
+            self.warehouse_columns.clear()
         if not self.task.partial_transforms:
             return f"saved {path}"
         stage = "load" if path in self.task.load_artifacts else "transform"
@@ -331,6 +373,9 @@ class ELTEpisodeState:
             self._tested_files.clear()
             result = self.backend.execute("load", self._read(self.task.load_artifacts))
             self._loaded = True
+            if self.task.load_streams and hasattr(self.backend, "columns"):
+                self.warehouse_columns = self.backend.columns()
+                return result + "\nActual columns:\n" + self.catalog_text()
             return result
         if stage == "transform":
             if file is not None and file not in self.task.transform_artifacts:
