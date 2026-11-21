@@ -78,6 +78,15 @@ def public_sql_review(sql: str, model_section: str) -> list[str]:
         feedback.append("The public page average covers all authors. Verify that its input includes authors "
                         "with no related book rows and that their page totals contribute zero to the average "
                         "and to the comparison.")
+    if "average sale price" in model_section.lower():
+        maximum_prices = {
+            alias.alias.lower() for alias in query.find_all(exp.Alias) if isinstance(alias.this, exp.Max)
+            and any("price" in column.name.lower() for column in alias.this.find_all(exp.Column))
+        }
+        if any(column.name.lower() in maximum_prices for average in query.find_all(exp.Avg)
+               for column in average.find_all(exp.Column)):
+            feedback.append("The average sale price uses a column computed with MAX(price). Check the average "
+                            "at the sale-line grain and keep it separate from the most expensive book ranking.")
     for count in query.find_all(exp.Count):
         value = count.this
         if not isinstance(value, exp.Distinct) or len(value.expressions) != 1:

@@ -296,3 +296,55 @@ The revised SQL advisory passed the full test suite using
 `pytest -q --tb=short --basetemp .venv/books-join-grain-final` with the real
 renderer and the local Terraform provider enabled. Result was 94 passed
 in 34.47 seconds.
+
+## Fourth 35B rehearsal
+
+Run `runs/books-full-baseline/stronger-04` used revision `d101a0e`,
+32 turns, a 12,288-token context cap, and the same 20,480-token sampled
+budget. The worst-case quote was USD 0.204288 against the remaining
+USD 0.21624882 from the current USD 0.24 authorization. The model loaded
+all data, wrote three SQL files, and submitted the complete pipeline on
+turn 29. Stage 1 was 1.0, Stage 2 was 2/3, and reward was
+0.7833333333333333. Publishers and customers matched exactly. The 1992
+publication rate now matched. The only remaining Stage 2 discrepancy
+was the author page classification, which differed for 169 authors.
+
+The submitted average excluded authors without book rows, and their NULL
+page totals were never classified as below average. A developer-only
+control including all authors eliminated all 169 differences. The revised
+advisory now checks this requirement independently of the sales-join
+warning. It uses only the public task description and the candidate SQL.
+The actual saved query produced the advisory in an offline check.
+Compacted observations also identify the next pending file. The full test
+suite passed 95 tests in 36.91 seconds with
+`pytest -q --tb=short --basetemp .venv/books-author-average`.
+
+The audit verified all 29 prompts and responses, 42 dispatched calls,
+41 eligible tool receipts, and the saved SQL. Token use was 17,703
+sampled, 108,672 cached input, and 19,146 uncached input. The estimated
+Tinker cost was USD 0.042029685. Billing had not posted for the run.
+
+## Fifth 35B rehearsal
+
+Run `runs/books-full-baseline/stronger-05` used revision `d4c75cf`,
+26 turns and a 12,288-token context cap. The read-only quote was
+USD 0.17111040 against USD 0.174219135 remaining. The model submitted all
+three files on turn 24. Stage 1 was 1.0, Stage 2 was 2/3, and reward was
+0.7833333333333333. Publishers and customers again matched exactly, and
+both previously incorrect author metrics matched in this run. The only
+remaining discrepancy was the author average-price flag, for 127 authors.
+
+The SQL averaged each book's maximum price for the average-sale-price
+measure. A private control computed that measure from sale lines and
+removed all 127 differences. The change to the execution advisory detects
+candidate SQL that averages a price column derived from MAX. It relies
+only on the candidate SQL and the public model description. An offline
+check verified it recognizes the actual saved author SQL.
+
+The audit verified 24 prompt and response pairs, 30 dispatched tools,
+28 eligible receipts, and that the saved files came from model writes.
+Recorded usage was 17,963 sampled, 83,072 cached input, and 16,623 uncached
+input tokens. Estimated cost was USD 0.038937435. Billing had not posted
+when checked. The full suite ran with
+`pytest -q --tb=short --basetemp .venv/books-sale-price` and passed 96 tests
+in 36.43 seconds.

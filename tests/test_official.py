@@ -399,6 +399,15 @@ def test_public_review_reminds_author_average_population_without_sale_join():
     assert not public_sql_review(sql, "average_pages: Average over authors with books.")
 
 
+def test_public_review_separates_average_sale_price_from_maximum_price():
+    sql = """WITH expensive AS (
+        SELECT book_id, MAX(price) AS highest_price FROM order_line GROUP BY book_id
+    ) SELECT AVG(highest_price) FROM expensive"""
+    requirement = "Set to 1 if the average sale price of the books written by the author is over $19."
+    assert "computed with MAX(price)" in public_sql_review(sql, requirement)[0]
+    assert not public_sql_review("SELECT MAX(price), AVG(price) FROM order_line", requirement)
+
+
 def test_local_books_date_format_translation_reports_the_file(monkeypatch):
     duckdb = pytest.importorskip("duckdb")
     pytest.importorskip("pandas")
