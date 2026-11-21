@@ -1059,6 +1059,8 @@ def test_official_episode_calls_two_isolated_warehouse_replays(checkout, tmp_pat
         loaded = call("execute_pipeline", 4, stage="load").text
         assert "author=7" in loaded and "author(author_id, author_name)" in loaded
         assert "book(publication_date TEXT)" in loaded
+        assert "book.publication_date TEXT. Parse text dates before date-part functions." in loaded
+        assert "book.publication_date TEXT" in episode.compact_state(turn=6)
         assert "Still need successful tests: publishers.sql, customers.sql, authors.sql." in loaded
         assert "SECRET" not in loaded
         catalog_queries = len(statements)

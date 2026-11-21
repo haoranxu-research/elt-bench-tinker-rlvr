@@ -218,6 +218,8 @@ class ELTEpisodeState:
         attempts = getattr(self.backend, "remaining_transform_attempts", None)
         tested = ", ".join(self.tested_files)
         status = f"After this turn: {turns} turns left. Tool calls left: {calls}."
+        if self.action_deadline is not None:
+            status += f" Agent action time left: {max(0, int(self.action_deadline - monotonic()))}s."
         if self.sampled_tokens_left is not None:
             remaining, reserve = self.sampled_tokens_left
             status += (f" Sampled tokens left: {remaining} "
@@ -349,7 +351,16 @@ class ELTEpisodeState:
         return self.backend.inspect() + "\n" + self.catalog_text()
 
     def catalog_text(self) -> str:
-        return "\n".join(self._catalog_table(name, columns) for name, columns in self.warehouse_columns.items())
+        types = getattr(self.backend, "temporal_columns", {})
+        text_dates = [f"{table}.{column} {kind}" for (table, column), kind in types.items()
+                      if column.endswith("_date") and kind in {"TEXT", "VARCHAR", "STRING"}
+                      and column in self.warehouse_columns.get(table, ())]
+        lines = []
+        if text_dates:
+            lines.append("Observed date fields stored as text: " + ", ".join(text_dates)
+                         + ". Parse text dates before date-part functions. In Snowflake, TRY_TO_DATE accepts text.")
+        lines.extend(self._catalog_table(name, columns) for name, columns in self.warehouse_columns.items())
+        return "\n".join(lines)
 
     def _catalog_table(self, name: str, columns: list[str]) -> str:
         types = getattr(self.backend, "temporal_columns", {})
@@ -482,7 +493,7 @@ class ELTEpisodeState:
                 if hasattr(self.backend, "source_labels") and {"book_language", "shipping_method"} & self.warehouse_columns.keys():
                     labels = self.backend.source_labels(self.warehouse_columns)
                     self.source_labels = "Observed source labels (book_language pairs are code, name): " + json.dumps(labels)
-                return result + "\n" + self.source_labels + "\nActual columns:\n" + self.catalog_text()
+                return result + "\nActual columns:\n" + self.catalog_text() + "\n" + self.source_labels
             return result
         if stage == "transform":
             if file is not None and file not in self.task.transform_artifacts:
