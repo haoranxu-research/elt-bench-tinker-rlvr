@@ -1,5 +1,7 @@
 # Hosted Qwen3.5-9B readiness
 
+This is the preflight record. [Executed rehearsal and outcome](books-hosted-rehearsal.md)
+
 ## Manifest failure and repair
 
 In `runs/books-offline-model/llama-native-v5/pipelines/local-native.tools.jsonl`,

@@ -49,9 +49,14 @@ skipped all model queries. [Commands and evidence](evidence/books-final-audit.md
 
 ## Hosted 9B rehearsal
 
-The next run is one Tinker sampling session on the base
-`Qwen/Qwen3.5-9B`, after authorization. The same tools and tokenizer as
-the official run execute against DuckDB on the staged `books` data.
+The authorized base `Qwen/Qwen3.5-9B` session loaded all 84,337 staged
+rows, saved all three SQL files, and repaired and tested two. It hit the
+6,144 sampled-token limit before submitting, so neither evaluator ran
+and the unsubmitted reward was 0. A new run requires separate approval.
+[Executed rehearsal and audit](evidence/books-hosted-rehearsal.md)
+
+The same tools and tokenizer as the official run execute against DuckDB
+on the staged `books` data.
 The pinned evaluator scores the model's own submission through local
 transport. The model receives public schemas and tool feedback.
 Reference CSVs stay with the evaluator. Check the tool trace for the
@@ -78,8 +83,8 @@ The pending candidate is the base `Qwen/Qwen3.5-9B` with its pinned
 no-thinking renderer. The runner writes exact prompt token IDs and
 sampled actions to an ignored run directory. It permits one group member,
 24 turns, 32 tool calls, one explicit grading replay, and a 40-minute
-rollout timeout. Run after reviewing the hosted rehearsal and receiving
-separate approval for Snowflake and Tinker.
+rollout timeout. Model submission remains unverified. This command
+requires separate approval for Snowflake and Tinker.
 [Official setup](LIVE_SETUP.md#official-snowflake-books)
 
 ```powershell
