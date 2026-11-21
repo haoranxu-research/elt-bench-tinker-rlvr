@@ -275,6 +275,39 @@ def test_books_interrupted_first_sql_resumes_from_loaded_state(tmp_path, monkeyp
     asyncio.run(run())
 
 
+def test_books_partial_submit_asks_to_test_saved_repair_before_deadline(tmp_path):
+    from elt_rl.contracts import Grade, PipelineError
+    from elt_rl.episode import ELTEpisodeState
+
+    class SingleFileBackend:
+        def execute(self, stage, files):
+            if stage == "transform" and any("wrong_amount" in sql for sql in files.values()):
+                raise PipelineError("order_totals.sql: invalid column wrong_amount")
+            return "executed"
+
+        def close(self):
+            pass
+
+    task = replace(local_task(), task_id="books", partial_transforms=True,
+                   open_backend=lambda *_: SingleFileBackend(),
+                   verify=lambda _: Grade(stage1=1, stage2=0.5, stage2_ran=True, submitted=True))
+    actions = [json.loads(line) for line in TRACE.read_text(encoding="utf-8").splitlines()]
+    with ELTEpisodeState(task, EpisodeConfig(tmp_path, max_turns=23, max_tool_calls=32)) as episode:
+        for turn, action in enumerate(actions[:5], 1):
+            episode.dispatch(action["tool"], action["arguments"], turn=turn)
+        episode.dispatch("execute_pipeline", {"stage": "transform", "file": "customer_totals.sql"}, turn=6)
+        failed = episode.dispatch("execute_pipeline", {"stage": "transform", "file": "order_totals.sql"}, turn=7)
+        assert failed.text.startswith("ERROR:")
+        repair = actions[6]
+        episode.dispatch(repair["tool"], repair["arguments"], turn=19)
+        partial = {"mode": "partial"}
+        blocked = episode.dispatch("submit_pipeline", partial, turn=20)
+        assert not blocked.submitted and "Test the newly saved SQL before partial submission: order_totals.sql" in blocked.text
+        episode.finalizing = True
+        allowed = episode.dispatch("submit_pipeline", partial, turn=23)
+        assert allowed.submitted
+
+
 def test_official_tool_trace_retains_feedback_even_without_submission(tmp_path):
     async def run():
         builder = ELTGroupBuilder(

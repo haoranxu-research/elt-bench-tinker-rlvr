@@ -348,3 +348,26 @@ input tokens. Estimated cost was USD 0.038937435. Billing had not posted
 when checked. The full suite ran with
 `pytest -q --tb=short --basetemp .venv/books-sale-price` and passed 96 tests
 in 36.43 seconds.
+
+## Sixth 35B rehearsal
+
+Run `runs/books-full-baseline/stronger-06` used revision `c8d72a9`,
+the no-thinking renderer, 25 turns, and a 10,240-token context cap. Its
+USD 0.13160448 quote fit the USD 0.13528170 remaining. The model again
+produced exact publisher and customer outputs. Its first author draft
+failed with a missing `book_id` in a CTE. It saved a repaired file on
+turn 19, then submitted only the two tested files on turn 20 with five
+turns left. The 32-call limit reserved the final call for submission,
+so there was no tool capacity to try the saved repair. Both evaluation
+stages ran. Stage 1 was 1.0, Stage 2 was
+2/3, and the reward was 0.7833333333333333.
+
+The no-thinking rehearsal now uses the same 48-call ceiling as reasoning
+mode. The token spending bound depends on the number of sampled turns and
+tokens, so the tool ceiling does not increase that bound. The new protocol
+asks the model to test a freshly saved draft before an
+early partial submission when it still has time, tool calls, working
+tokens, and warehouse attempts. It permits explicit partial submission
+after that test fails and in the reserved submission phase. Token use
+was 6,014 sampled, 82,176 cached input, and 15,098 uncached input.
+The estimate was USD 0.02221863.

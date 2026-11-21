@@ -131,6 +131,7 @@ class ELTEpisodeState:
         self._loaded = False
         self._tested_turn: int | None = None
         self._tested_files: dict[str, int] = {}
+        self._unattempted_files: set[str] = set()
         self._last_turn = 0
         self._calls = 0
         self._submission_attempts = 0
@@ -407,6 +408,8 @@ class ELTEpisodeState:
         target.write_bytes(encoded)
         self._tested_turn = None
         self._tested_files.pop(path, None)
+        if self.task.partial_transforms and path in self.task.transform_artifacts:
+            self._unattempted_files.add(path)
         if path in self.task.load_artifacts:
             self._loaded = False
             self._tested_files.clear()
@@ -453,6 +456,7 @@ class ELTEpisodeState:
             if file is not None:
                 self._tested_files.pop(file, None)
             artifacts = self._read(names)
+            self._unattempted_files.difference_update(names)
             try:
                 result = self.backend.execute("transform", artifacts)
             except PartialTransformError as error:
@@ -502,6 +506,14 @@ class ELTEpisodeState:
             if mode == "complete" and ready != names:
                 missing = ", ".join(name for name in names if name not in ready)
                 raise PipelineError(f"test these current SQL files on an earlier turn: {missing}. Or submit with mode=partial.")
+            if (mode == "partial" and self._unattempted_files and not self.finalizing
+                    and self.config.max_turns - turn >= 2 and self.config.max_tool_calls - self._calls >= 2
+                    and getattr(self.backend, "remaining_transform_attempts", None) != 0
+                    and (self.sampled_tokens_left is None or self.sampled_tokens_left[0] - self.sampled_tokens_left[1] >= 128)):
+                drafts = ", ".join(name for name in names if name in self._unattempted_files)
+                raise PipelineError(f"Test the newly saved SQL before partial submission: {drafts}. "
+                                    "Call execute_pipeline with stage=transform and that filename. "
+                                    "If it fails, you can still submit the tested subset.")
             names = ready
         elif self._tested_turn is None or self._tested_turn >= turn:
             raise PipelineError("successfully execute current artifacts in an earlier turn before submitting")

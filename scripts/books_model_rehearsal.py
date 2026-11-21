@@ -218,7 +218,7 @@ async def run_hosted(args, task, bundle, assets, expected, evaluator_calls):
     budget = HOSTED_REASONING_BUDGET if reasoning else HOSTED_BUDGET
     if args.context_cap is not None:
         budget = replace(budget, context=args.context_cap)
-    config = EpisodeConfig(args.out / "work", max_turns=args.turn_cap, max_tool_calls=48 if reasoning else 32,
+    config = EpisodeConfig(args.out / "work", max_turns=args.turn_cap, max_tool_calls=48,
                            rollout_seconds=600, max_submissions=1)
     try:
         result = await run_remote(
