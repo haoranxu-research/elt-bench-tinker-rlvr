@@ -173,10 +173,14 @@ class ELTMessageEnv(AgentToolMessageEnv):
         self.history = messages
         return self.history
 
-    def compact(self) -> list[Message]:
-        self.history = [*self.initial_messages, {"role": "user", "content":
-                        "Working state after context compaction. Continue from this state without restarting:\n"
-                        + self._episode.compact_state(self.turn)}]
+    def compact(self, *, interrupted: bool = False) -> list[Message]:
+        state = ("Working state after context compaction. Continue from this state without restarting:\n"
+                 + self._episode.compact_state(self.turn))
+        if interrupted:
+            state += ("\nThe interrupted action made no changes. Respond with a single tool call. "
+                      + self._episode.recovery_action())
+        # The final initial message asks for the first action of a new episode.
+        self.history = [*self.initial_messages[:-1], {"role": "user", "content": state}]
         return self.history
 
 
@@ -261,11 +265,17 @@ class BooksTokenEnv(ELTTokenEnv):
         ):
             previous_length = result.next_observation.length
             previous_history = self.books_messages.history
-            compact = await self._render_in_thread(self.books_messages.compact())
+            messages = self.books_messages.compact(interrupted=recover_interrupted)
+            if recover_interrupted:
+                compact = await asyncio.to_thread(self.final_renderer.build_generation_prompt, messages)
+            else:
+                compact = await self._render_in_thread(messages)
             if self.context_room(compact.length) >= 2 and (context_full or recover_interrupted or compact.length < previous_length):
                 self._finished = False
                 metrics = {key: value for key, value in result.metrics.items() if not key.startswith("stop/")}
                 metrics.update(context_compacted=1, compact_prompt_tokens=compact.length)
+                if recover_interrupted:
+                    metrics["interrupted_action_recovery"] = 1
                 return types.StepResult(0.0, False, compact, self._base_stop_condition, metrics=metrics, logs=result.logs)
             self.books_messages.history = previous_history
         if not (interrupted or context_full or last_turn or last_call or low_tokens):

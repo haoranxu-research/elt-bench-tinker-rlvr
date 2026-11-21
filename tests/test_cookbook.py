@@ -233,6 +233,37 @@ def test_books_submission_reserve_keeps_one_explicit_action(tmp_path, boundary, 
         assert trajectory.transitions[-2].logs["tool_calls_skipped_for_submission"] == 1
 
 
+def test_books_interrupted_first_sql_resumes_from_loaded_state(tmp_path):
+    async def run():
+        task = replace(local_task(), task_id="books", partial_transforms=True)
+        renderer = cast(Renderer, ScriptedRenderer())
+        builder = ELTGroupBuilder(EpisodeConfig(tmp_path), renderer, 1, task_factory=lambda: task,
+                                  budget=TokenBudget(context=16384, sampled=20480, per_turn=4096),
+                                  submission_reserve=200)
+        env, = await builder.make_envs()
+        actions = [json.loads(line) for line in TRACE.read_text(encoding="utf-8").splitlines()]
+        try:
+            await env.initial_observation()
+            await env.step(list(json.dumps(actions[:3]).encode()))
+            interrupted = await env.step(list(b'[{"tool":"write_pipeline_file"') + [32] * 4000,
+                                         extra={"stop_reason": "length"})
+            prompt = bytes(interrupted.next_observation.to_ints()).decode()
+            assert "Your first action is read_task" not in prompt
+            assert "The interrupted action made no changes. Respond with a single tool call." in prompt
+            assert "The source data is loaded. Write only customer_totals.sql with write_pipeline_file." in prompt
+            assert interrupted.metrics["interrupted_action_recovery"] == 1 and not interrupted.episode_done
+            assert not (builder.episodes[0].artifact_dir / "customer_totals.sql").exists()
+            await env.step(list(json.dumps([actions[3]]).encode()))
+            interrupted = await env.step([32] * 4096, extra={"stop_reason": "length"})
+            prompt = bytes(interrupted.next_observation.to_ints()).decode()
+            assert "The source data is loaded. Test saved customer_totals.sql" in prompt
+            assert (builder.episodes[0].artifact_dir / "customer_totals.sql").is_file()
+        finally:
+            await builder.cleanup()
+
+    asyncio.run(run())
+
+
 def test_official_tool_trace_retains_feedback_even_without_submission(tmp_path):
     async def run():
         builder = ELTGroupBuilder(

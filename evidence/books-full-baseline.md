@@ -164,11 +164,57 @@ A read-only Tinker preflight for `Qwen/Qwen3.6-35B-A3B` passed with the pinned
 Qwen reasoning tokenizer and renderer. Account metadata showed sampling
 support and a maximum context of 65,536 tokens. The same local 32-turn profile
 with the default 16,384-token cap and 20,480 sampled tokens has a conservative
-uncached bound of USD 0.26327040. This model requires separate authorization.
-The proposed next run is one local rehearsal with a USD 0.27 cap.
+uncached bound of USD 0.26327040. One local rehearsal was authorized and
+launched with a USD 0.27 cap.
 Snowflake grading remains gated on a genuine local score of 1.0 at both stages.
 The preflight ran the following command in the configured project environment.
 
 ```powershell
 ./.venv/Scripts/python.exe -c 'from pathlib import Path; import sys,runpy; sys.path.append(str(Path(sys.base_prefix)/""Lib""/""site-packages"")); sys.path.append("".venv-core/Lib/site-packages""); sys.path.insert(0,""scripts""); runpy.run_path(""scripts/books_model_rehearsal.py"",run_name=""__main__"")' --hosted --preflight-only --model Qwen/Qwen3.6-35B-A3B --renderer qwen3_5 --budget-usd 0.27 --checkout ../upstream-elt-bench --assets runs/books-assets --out runs/books-full-baseline/stronger-preflight-current
 ```
+
+## Authorized 35B rehearsal
+
+Run `runs/books-full-baseline/stronger-01` used revision `34fbf96`. The launch
+used the preflight command above with `--allow-paid` in place of
+`--preflight-only` and `stronger-01` as the fresh output directory.
+The model independently wrote a valid manifest and loaded all 15 DuckDB
+tables (84,337 rows). It never saved a transformation or submitted. Neither
+evaluator ran, and the unsubmitted environment reward was exactly 0.
+
+Turns 6, 11, 16, and 21 each reached the per-turn cap of 4,096 output tokens.
+The turn 6 sample began serializing a publisher SQL write but lacked a
+closing tool-call marker. Turn 11 used its allowance reasoning about multiple
+models and never began a tool call. The recovery observation preserved the
+loaded state but also repeated the original instruction to begin with
+`read_task`. Each recovery loop reread the task, saved the same manifest,
+and requested a load that the host correctly treated as already complete.
+The final working turn hit the remaining 803-token cap. With no successfully
+tested SQL files, the episode ended unsubmitted.
+
+The run consumed 20,426 sampled, 76,672 cached input, and 17,821 uncached input
+tokens. The usage-based estimate is USD 0.04218864. The audit matched
+26 responses to 26 prompts, verified behavior log probabilities and all 35
+dispatched calls, and found no posted billing rows for the run. There was
+one hosted session, with no retries, Snowflake compute, or training.
+
+The offline repair removes the new-episode user instruction from compacted
+prompts. After a truncated action it provides one explicit next step based on
+the preserved file and load state, and uses the same Qwen tool format with
+thinking disabled for that recovery turn. Normal working turns retain the
+selected renderer. A replay of the first six archived 35B responses against
+the actual DuckDB data regenerated a 3,224-token recovery prompt. It directed
+the model to write one file, retained the warehouse schema and loaded state,
+and confirmed the truncated SQL was never saved. The replay issued no model
+or evaluator requests. Evidence is in `stronger-01/offline-recovery-check.json`.
+The full suite ran as
+`pytest -q --tb=short --basetemp .venv/books-interrupted-35b` with the real
+renderer and the local Terraform provider enabled. Result was 93 passed
+in 33.18 seconds. The fix has not been verified in another hosted session.
+
+The follow-up read-only preflight for the corrected code passed with the
+same reasoning profile and a 14,336-token context cap. The uncached upper
+bound is USD 0.23377920. The command adds `--context-cap 14336`, sets
+`--budget-usd 0.24`, and writes to
+`runs/books-full-baseline/stronger-recovery-preflight`. No follow-up sampling
+session was launched.

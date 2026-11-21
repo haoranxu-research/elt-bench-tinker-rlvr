@@ -349,6 +349,22 @@ class ELTEpisodeState:
             details.append("Most recent tool error:\n" + self.latest_error)
         return "\n\n".join(details) + "\nSaved files are unchanged. Use read_pipeline_file for their exact contents."
 
+    def recovery_action(self) -> str:
+        if not self._inspected_task:
+            return "Call read_task."
+        if not self._loaded:
+            if all((self.artifact_dir / name).exists() for name in self.task.load_artifacts):
+                return "Call execute_pipeline with stage=load for the saved load manifest."
+            return "Use write_pipeline_file to save the load manifest."
+        for name in self.task.transform_artifacts:
+            if name in self._tested_files:
+                continue
+            if (self.artifact_dir / name).exists():
+                return (f"The source data is loaded. Test saved {name} with execute_pipeline, "
+                        f"stage=transform and file={name}.")
+            return f"The source data is loaded. Write only {name} with write_pipeline_file."
+        return "All current SQL files have passed their tests. Call submit_pipeline to grade them."
+
     @property
     def _allowed(self) -> tuple[str, ...]:
         return self.task.load_artifacts + self.task.transform_artifacts
