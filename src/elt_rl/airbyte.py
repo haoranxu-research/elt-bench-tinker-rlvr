@@ -47,7 +47,10 @@ def select_streams(text: str, available: dict[str, dict[str, str]]) -> dict[str,
     try:
         payload = json.loads(text)
     except (ValueError, RecursionError):
-        raise PipelineError("load.json must contain valid JSON") from None
+        raise PipelineError(
+            "load.json must contain valid JSON. Use write_pipeline_file to replace it with a sources object "
+            "using the groups and streams from read_task."
+        ) from None
     if not isinstance(payload, dict) or set(payload) != {"sources"}:
         raise PipelineError("load.json must contain a sources object")
     selected = payload["sources"]

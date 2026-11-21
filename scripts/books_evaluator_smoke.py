@@ -54,9 +54,9 @@ def save_result(out, report):
     print(encoded)
 
 
-def check_local_database(connection, assets, expected, queries):
+def load_local_inputs(connection, assets, tables):
     connection.execute('CREATE SCHEMA "BOOKS"')
-    for table in expected:
+    for table in tables:
         if table == "address_status":
             source = connection.read_json(str(assets / "flat-files/address_status.jsonl"))
         else:
@@ -65,6 +65,10 @@ def check_local_database(connection, assets, expected, queries):
             source = connection.read_csv(str(path), header=True)
         source.create(f"books.{table}")
     connection.execute("SET schema = 'BOOKS'")
+
+
+def check_local_database(connection, assets, expected, queries):
+    load_local_inputs(connection, assets, expected)
     for name, query in queries.items():
         connection.execute(f"CREATE TABLE books.{name} AS {query}")
 

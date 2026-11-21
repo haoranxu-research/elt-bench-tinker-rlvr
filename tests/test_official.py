@@ -331,30 +331,50 @@ def test_books_write_repair_submit_and_fresh_replay(tmp_path, monkeypatch, mode)
     files = tuple(f"{name}.sql" for name in official.MODELS)
     task = TaskDefinition("books", "three files", ("load.json",), files,
                           open_backend, verify, partial_transforms=True)
-    with ELTEpisodeState(task, EpisodeConfig(tmp_path)) as episode:
+    last_turn = 8 if mode == "complete" else 5
+    with ELTEpisodeState(task, EpisodeConfig(tmp_path, max_turns=last_turn)) as episode:
         def call(tool, turn, **args):
             return episode.dispatch(tool, args, turn=turn)
 
         call("read_task", 1)
+        assert episode.tool_schema("write_pipeline_file")["properties"]["path"]["enum"] == ["load.json", *files]
+        assert "one bare filename: load.json" in call(
+            "write_pipeline_file", 1, path="./data/load.json", content="{}",
+        ).text
         assert "write_pipeline_file" in call("execute_pipeline", 1, stage="load", sql="SELECT 1").text
         assert "missing" in call("list_workspace", 1).text
         assert "execute_pipeline with stage=load" in call("write_pipeline_file", 2, path="load.json", content="{}").text
-        call("execute_pipeline", 2, stage="load")
+        assert "for stage=load" in call("execute_pipeline", 2, stage="load", file="authors.sql").text
+        assert "load finished" in call("execute_pipeline", 2, stage="load", file="load.json").text
         assert "already loaded" in call("execute_pipeline", 2, stage="load").text
         for name in files:
             call("write_pipeline_file", 3, path=name,
                  content="SELECT BAD_COLUMN FROM author" if name == "customers.sql" else "SELECT * FROM author")
-        assert "customers.sql: Snowflake query failed" in call("execute_pipeline", 4, stage="transform").text
-        assert not call("submit_pipeline", 5, mode="partial").submitted
-        assert "Tested: publishers.sql" in call("execute_pipeline", 5, stage="transform", file="publishers.sql").text
-        assert "already contains" in call("write_pipeline_file", 5, path="publishers.sql", content="SELECT * FROM author").text
-        assert "later turn" in call("submit_pipeline", 5, mode="partial").text
-        assert "authors.sql" in call("submit_pipeline", 6).text
-        call("write_pipeline_file", 6, path="customers.sql", content="SELECT * FROM author")
-        assert "customers.sql: saved, needs execution" in call("list_workspace", 6).text
+        failure = call("execute_pipeline", 4, stage="transform").text
+        assert "customers.sql: Snowflake query failed" in failure
+        assert "Current tested files: publishers.sql" in failure
+        assert "later turn" in call("submit_pipeline", 4, mode="partial").text
+        assert "publishers.sql: tested" in call("list_workspace", 4).text
+        assert episode.grade() == Grade() and len(opened) == 1
         if mode == "complete":
+            assert "Tested: publishers.sql" in call(
+                "execute_pipeline", 5, stage="transform", file="publishers.sql",
+            ).text
+            assert "already contains" in call(
+                "write_pipeline_file", 5, path="publishers.sql", content="SELECT * FROM author",
+            ).text
+            assert "later turn" in call("submit_pipeline", 5, mode="partial").text
+            assert "authors.sql" in call("submit_pipeline", 6).text
+            call("write_pipeline_file", 6, path="customers.sql", content="SELECT * FROM author")
+            assert "customers.sql: saved, needs execution" in call("list_workspace", 6).text
             assert "Tested:" in call("execute_pipeline", 7, stage="transform").text
-        result = call("submit_pipeline", 8, mode=mode)
+            assert "reserved for submit_pipeline" in call(
+                "write_pipeline_file", 8, path="authors.sql", content="SELECT BAD_COLUMN FROM author",
+            ).text
+        else:
+            assert "Use the next turn to call submit_pipeline" in failure
+            assert "Warehouse transform attempts left: 6" in failure
+        result = call("submit_pipeline", last_turn, mode=mode)
         assert result.submitted and "Stage 1: 1" in result.text
         assert "Reward: " in result.text
         assert len(opened) == 2 and opened[0] != opened[1]

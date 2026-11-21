@@ -17,11 +17,12 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .airbyte import GROUPS, AirbyteRun, private_environment, select_streams, streams, terraform_plan
-from .contracts import EpisodeConfig, Grade, PipelineError, Stage, TaskDefinition, WarehouseBackend
+from .contracts import EpisodeConfig, Grade, PartialTransformError, PipelineError, Stage, TaskDefinition, WarehouseBackend
 from .settings import OFFICIAL_NAMES, ConfigurationError
 
 BENCH_SHA = "3b068d5f15f64541d05fbc33a817e4b08c6bf173"
 MODELS = ("publishers", "customers", "authors")
+MAX_TRANSFORM_ATTEMPTS = 7  # Three first checks and up to four repairs before submission.
 CREDENTIAL_FIELDS = ("account", "host", "user", "password", "role", "warehouse")
 CONNECTION_FIELDS = ("account", "host", "user", "role", "warehouse")
 AIRBYTE_BINDINGS = ("username", "password", "workspace_id", "custom_api_definition_id")
@@ -158,12 +159,15 @@ class SnowflakeBooksBackend:
     def _run_sql(self, statements: list[str], *, artifact_names: Mapping[int, str] | None = None):
         import snowflake.connector
         artifact = None
+        tested_files = []
         try:
             with closing(snowflake.connector.connect(**self._connection_options())) as connection:
                 with closing(connection.cursor()) as cursor:
                     for index, statement in enumerate(statements):
                         artifact = artifact_names.get(index) if artifact_names else None
                         cursor.execute(statement, timeout=self.query_timeout, num_statements=1)
+                        if artifact is not None:
+                            tested_files.append(artifact)
                     artifact = None
                     return cursor.fetchall()
         except snowflake.connector.errors.Error as error:
@@ -181,7 +185,14 @@ class SnowflakeBooksBackend:
                 if location:
                     detail += f" ({'generated statement, ' if artifact else ''}{location[0]})"
             prefix = f"{artifact}: " if artifact else ""
-            raise PipelineError(f"{prefix}Snowflake query failed (SQLSTATE {state}){detail}") from None
+            message = f"{prefix}Snowflake query failed (SQLSTATE {state}){detail}"
+            if tested_files:
+                raise PartialTransformError(message, tuple(tested_files)) from None
+            raise PipelineError(message) from None
+
+    @property
+    def remaining_transform_attempts(self) -> int:
+        return max(0, MAX_TRANSFORM_ATTEMPTS - self.transform_attempts)
 
     def execute(self, stage: Stage, artifacts: Mapping[str, str]) -> str:
         if stage == "load":
@@ -206,7 +217,7 @@ class SnowflakeBooksBackend:
             raise PipelineError("Fix the SQL files below before running transform:\n" + "\n".join(errors))
         if not models:
             raise PipelineError("provide at least one saved SQL file")
-        if self.transform_attempts >= 4:
+        if not self.remaining_transform_attempts:
             raise PipelineError("official transform attempt limit reached")
         self.transform_attempts += 1
         self._run_sql([
@@ -410,10 +421,19 @@ def snowflake_task(config: OfficialConfig, *, allow_paid: bool = False) -> TaskD
     if not shutil.which(config.terraform):
         raise ConfigurationError("install Terraform or set ELT_TERRAFORM to its executable")
     public = pinned_books_bundle(config.checkout, config.books_input)
-    available = streams(public)
+    raw_tables = frozenset(name for group in streams(public).values() for name in group)
     credentials = read_credentials(config.credential_file)
     if any(not (config.ground_truth / "books" / f"{name}.csv").is_file() for name in MODELS):
         raise ConfigurationError("ELT_GT_SNOWFLAKE must contain official books ground truth CSVs")
+    return books_task_definition(
+        config.checkout, public,
+        partial(SnowflakeBooksBackend, config=config, bundle=public, credentials=credentials, raw_tables=raw_tables),
+        _verify,
+    )
+
+
+def books_task_definition(checkout, public, open_backend, verify) -> TaskDefinition:
+    available = streams(public)
     instructions = (
         "Official ELT-Bench Snowflake task: books. Write load.json with a top-level "
         "sources object. In sources, map each listed group to an array of all its stream names. "
@@ -426,9 +446,7 @@ def snowflake_task(config: OfficialConfig, *, allow_paid: bool = False) -> TaskD
         "three, test at least one file and use submit_pipeline with mode=partial on a later turn.\n"
         + "\n".join(f"{name}: {', '.join(available[name])}" for name in GROUPS)
     )
-    raw_tables = frozenset(name for group in available.values() for name in group)
     return TaskDefinition(
         "books", instructions, ("load.json",), tuple(f"{name}.sql" for name in MODELS),
-        partial(SnowflakeBooksBackend, config=config, bundle=public, credentials=credentials, raw_tables=raw_tables),
-        _verify, _source_sections(config.checkout, public), partial_transforms=True,
+        open_backend, verify, _source_sections(checkout, public), partial_transforms=True,
     )

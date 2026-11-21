@@ -20,8 +20,8 @@ from tinker_cookbook.utils.cost_estimation import TokenCostRates, TokenUsage, fe
 
 from .contracts import LORA_RANK, PILOT_BUDGET, EpisodeConfig, TaskDefinition, TokenBudget
 from .cookbook import ELTDataset, ELTGroupBuilder
-from .rendering import QWEN_TOKENIZER_REVISION, make_renderer
-from .settings import DEFAULT_MODEL, DEFAULT_RENDERER, ConfigurationError
+from .rendering import QWEN_TOKENIZER_REVISIONS, make_renderer
+from .settings import DEFAULT_RENDERER, ConfigurationError
 from .tinker_once import single_attempt_sdk
 
 COOKBOOK_SHA = "28de41edfcdd07ba3e7980f35d53a586024a2184"
@@ -31,8 +31,13 @@ LOSS = "importance_sampling"
 @dataclass
 class RecordedTokenCompleter(TinkerTokenCompleter):
     trace_file: Path | None = None
+    prompt_trace_file: Path | None = None
 
     async def __call__(self, model_input, stop, *, max_tokens=None):
+        if self.prompt_trace_file is not None:
+            with self.prompt_trace_file.open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps({"prompt_token_ids": model_input.to_ints(), "stop": stop,
+                                         "max_tokens": max_tokens}, allow_nan=False) + "\n")
         sample = await super().__call__(model_input, stop, max_tokens=max_tokens)
         logprobs = sample.logprobs
         if (len(sample.tokens) != len(logprobs) or not all(math.isfinite(p) for p in logprobs)
@@ -241,8 +246,7 @@ async def run_remote(
     if not math.isfinite(estimate) or estimate <= 0 or estimate > max_usd:
         raise ConfigurationError(f"estimated Tinker token cost exceeds the bound or is invalid ({estimate:.4f} USD)")
     record(model=model, renderer=renderer_name, task=task.task_id, seed=seed,
-           tokenizer_revision=QWEN_TOKENIZER_REVISION if (model, renderer_name) ==
-           (DEFAULT_MODEL, DEFAULT_RENDERER) else None,
+           tokenizer_revision=QWEN_TOKENIZER_REVISIONS.get(model) if renderer_name == DEFAULT_RENDERER else None,
            cookbook_sha=COOKBOOK_SHA, tinker_version=version("tinker"),
            lora_rank=LORA_RANK if train else None, loss=LOSS if train else None,
            token_budget=asdict(budget), members=members, max_turns=config.max_turns,
@@ -275,7 +279,8 @@ async def run_remote(
             record(session_url=service.get_console_url(), session_creation="completed")
         policy = RecordedTokenCompleter(sampling_client, max_tokens=budget.per_turn,
                                         temperature=0.8, context_window=budget.context,
-                                        trace_file=out / "sampled-actions.jsonl")
+                                        trace_file=out / "sampled-actions.jsonl",
+                                        prompt_trace_file=None if train else out / "prompt-inputs.jsonl")
         dataset = ELTDataset(ELTGroupBuilder(
             config, renderer, members, task_factory=lambda: task, budget=budget, evidence_dir=out / "pipelines",
         ))

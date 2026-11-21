@@ -190,7 +190,7 @@ def _renderer_probe(model: str, renderer: str) -> str:
         "s='<tool_call><function=read_task></function></tool_call><|im_end|>';"
         "m,state=r.parse_response(r.tokenizer.encode(s,add_special_tokens=False));"
         "assert state.is_clean and m['tool_calls'][0].function.name=='read_task'"
-        if (model, renderer) == (DEFAULT_MODEL, DEFAULT_RENDERER) else
+        if renderer == DEFAULT_RENDERER else
         "import json,sys;sys.path.extend(json.loads(sys.argv[3]));"
         "from elt_rl.rendering import make_renderer;"
         "assert make_renderer(sys.argv[1],sys.argv[2],offline=True).get_stop_sequences()"

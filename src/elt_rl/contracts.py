@@ -10,6 +10,14 @@ class PipelineError(ValueError):
     """A bounded, model-safe pipeline error that the agent can repair."""
 
 
+class PartialTransformError(PipelineError):
+    """A batch failed after materializing some of its current artifacts."""
+
+    def __init__(self, message: str, tested_files: tuple[str, ...]):
+        super().__init__(message)
+        self.tested_files = tested_files
+
+
 @dataclass(frozen=True)
 class EpisodeConfig:
     work_root: Path

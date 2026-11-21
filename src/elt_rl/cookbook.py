@@ -16,7 +16,7 @@ from tinker_cookbook.rl.types import Env, EnvGroupBuilder, Metrics, RLDataset
 from tinker_cookbook.tool_use import AgentToolMessageEnv, Tool, ToolInput, ToolResult, simple_tool_result
 
 from .contracts import EpisodeConfig, TaskDefinition, TokenBudget
-from .episode import INITIAL_INSTRUCTION, ELTEpisodeState
+from .episode import BOOKS_INSTRUCTION, BOOKS_REQUEST, INITIAL_INSTRUCTION, ELTEpisodeState
 from .local import local_task
 
 logger = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ class EpisodeTool:
 
     @property
     def parameters_schema(self) -> dict:
-        return self.episode.tools[self.name].schema()
+        return self.episode.tool_schema(self.name)
 
     def to_spec(self) -> ToolSpec:
         return {"name": self.name, "description": self.description, "parameters": self.parameters_schema}
@@ -61,12 +61,15 @@ class ELTMessageEnv(AgentToolMessageEnv):
     def __init__(self, episode: ELTEpisodeState, renderer: Renderer, trace_file: Path | None = None):
         self.turn = 0
         self.finished = False
+        self._used_text_recovery = False
+        self._episode = episode
         tools: list[Tool] = [EpisodeTool(name, lambda: self.turn, episode, trace_file) for name in episode.tools]
         messages = renderer.create_conversation_prefix_with_tools(
             tools=[tool.to_spec() for tool in tools],
-            system_prompt=INITIAL_INSTRUCTION,
+            system_prompt=BOOKS_INSTRUCTION if episode.task.partial_transforms else INITIAL_INSTRUCTION,
         )
-        messages.append({"role": "user", "content": "Complete the ELT task."})
+        messages.append({"role": "user", "content": BOOKS_REQUEST if episode.task.partial_transforms
+                         else "Complete the ELT task."})
 
         async def reward_fn(_: list[Message]) -> tuple[float, Metrics]:
             grade = episode.grade()
@@ -83,6 +86,14 @@ class ELTMessageEnv(AgentToolMessageEnv):
             raise RuntimeError("episode already ended")
         self.turn += 1
         result = await super().step(message)
+        if result.metrics.get("stop/completed") and not self._used_text_recovery:
+            hint = self._episode.continuation_hint(self.turn)
+            if hint is not None:
+                self._used_text_recovery = True
+                result.episode_done = False
+                result.metrics.pop("stop/completed")
+                result.metrics["text_recovery"] = 1
+                result.next_messages.append({"role": "user", "content": hint})
         self.finished = result.episode_done
         return result
 

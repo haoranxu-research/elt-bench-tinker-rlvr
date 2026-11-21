@@ -5,7 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory, mkdtemp
 from threading import RLock
 
-from .contracts import EpisodeConfig, Grade, PipelineError, TaskDefinition
+from .contracts import EpisodeConfig, Grade, PartialTransformError, PipelineError, TaskDefinition
 
 
 @dataclass(frozen=True)
@@ -24,7 +24,7 @@ class ToolSpec:
         if "stage" in properties:
             properties["stage"]["enum"] = ["load", "transform"]
         if "file" in properties:
-            properties["file"]["description"] = "Optional approved SQL filename, only for transform."
+            properties["file"]["description"] = "Optional filename. Use load.json for load or one saved SQL filename for transform."
         if "mode" in properties:
             properties["mode"].update(enum=["complete", "partial"], default="complete")
         return {
@@ -47,8 +47,16 @@ TOOLS = {
 
 BOOKS_TOOLS = {
     **TOOLS,
-    "execute_pipeline": ToolSpec(TOOLS["execute_pipeline"].description + " To test one saved SQL file, also pass file.", ("stage",), ("file",)),
-    "submit_pipeline": ToolSpec("Grade saved files tested on earlier turns in a fresh warehouse. Call with {} when all pass, or mode=partial to grade only the files that pass if you cannot finish. No SQL arguments.", optional=("mode",)),
+    "execute_pipeline": ToolSpec(
+        "Load saved load.json with stage=load, optionally specifying file=load.json. To test one saved SQL file, pass "
+        "stage=transform and file set to that filename. An omitted file tests the complete batch.",
+        ("stage",), ("file",),
+    ),
+    "submit_pipeline": ToolSpec(
+        "Call on a later turn to grade current tested files in a fresh warehouse. Pass mode=partial "
+        "to submit the validated subset, or use {} after all files pass. Submit before the budget ends.",
+        optional=("mode",),
+    ),
 }
 
 INITIAL_INSTRUCTION = (
@@ -56,6 +64,18 @@ INITIAL_INSTRUCTION = (
     "Only write_pipeline_file persists SQL. Execute load, save each SQL file, then execute transform. "
     "For a SQL error, rewrite the named file and execute again. Reserve a later turn to submit after execution succeeds."
 )
+BOOKS_INSTRUCTION = (
+    "Use tools to complete the ELT task. Start with read_task. Save load.json with write_pipeline_file, "
+    "then execute_pipeline with stage=load. "
+    "Use bare filenames for every tool, without directory prefixes. Read the relevant source and model sections. "
+    "For each model, use write_pipeline_file(path, content) to save the full SQL query, then test just "
+    "that file with execute_pipeline(stage=transform, file=filename). Rewrite the named file when it fails. "
+    "Only write_pipeline_file accepts SQL text. Follow the remaining budget and tested files in tool feedback. "
+    "Submit on a later turn after testing. If time or transform attempts are running out, "
+    'call submit_pipeline with {"mode":"partial"} to grade the current tested subset. '
+    "The last turn and last tool call are reserved for submission."
+)
+BOOKS_REQUEST = "Complete the ELT task using the tools. Your first action is read_task with {}."
 
 
 @dataclass(frozen=True)
@@ -123,10 +143,42 @@ class ELTEpisodeState:
                 return Feedback("ERROR: tool call limit reached")
             self._calls += 1
             try:
+                if self.task.partial_transforms and name != "submit_pipeline" and (
+                    turn == self.config.max_turns or self._calls == self.config.max_tool_calls
+                ):
+                    raise PipelineError("final turn or tool call reserved for submit_pipeline")
                 value = self._call(name, arguments, turn)
             except PipelineError as exc:
                 value = f"ERROR: {exc}"
+            if self.task.partial_transforms and self._grade is None:
+                budget = "\n" + self._submission_status(turn)
+                room = max(0, self.config.max_output_chars - len(budget))
+                return Feedback((value[:room] + budget)[:self.config.max_output_chars])
             return Feedback(value[:self.config.max_output_chars], self._grade is not None)
+
+    def _submission_status(self, turn: int) -> str:
+        turns = self.config.max_turns - turn
+        calls = self.config.max_tool_calls - self._calls
+        attempts = getattr(self.backend, "remaining_transform_attempts", None)
+        tested = ", ".join(name for name in self.task.transform_artifacts if name in self._tested_files)
+        status = f"After this turn: {turns} turns left. Tool calls left: {calls}."
+        if attempts is not None:
+            status += f" Warehouse transform attempts left: {attempts}."
+        status += f" Current tested files: {tested or 'none'}."
+        if self._tested_files and (turns <= 3 or calls <= 3 or attempts == 0):
+            arguments = "{}" if len(self._tested_files) == len(self.task.transform_artifacts) else '{"mode":"partial"}'
+            status += f" Use the next turn to call submit_pipeline with {arguments}."
+        return status
+
+    def continuation_hint(self, turn: int) -> str | None:
+        if not self.task.partial_transforms or turn >= self.config.max_turns:
+            return None
+        if self._calls >= self.config.max_tool_calls or self._grade is not None:
+            return None
+        return (
+            "No tool call was received. Text or JSON in chat does not change the pipeline. "
+            "Use a tool for your next action. " + self._submission_status(turn)
+        )
 
     def _call(self, name: str, arguments: object, turn: int) -> str:
         spec = self.tools.get(name)
@@ -166,6 +218,20 @@ class ELTEpisodeState:
     def tools(self) -> dict[str, ToolSpec]:
         return BOOKS_TOOLS if self.task.partial_transforms else TOOLS
 
+    def tool_schema(self, name: str) -> dict:
+        schema = self.tools[name].schema()
+        if self.task.partial_transforms:
+            choices = {
+                "write_pipeline_file": ("path", self._allowed),
+                "read_task_section": ("section", tuple(self.task.sections)),
+                "execute_pipeline": ("file", self._allowed),
+            }
+            if name in choices:
+                key, values = choices[name]
+                if values:
+                    schema["properties"][key]["enum"] = list(values)
+        return schema
+
     def _read_task_section(self, section: str) -> str:
         if section not in self.task.sections:
             raise PipelineError("unknown task section")
@@ -188,6 +254,8 @@ class ELTEpisodeState:
 
     def _write(self, path: str, content: str) -> str:
         if path not in self._allowed:
+            if self.task.partial_transforms:
+                raise PipelineError("path must be one bare filename: " + ", ".join(self._allowed))
             raise PipelineError("path must be an approved artifact name")
         if path in self.task.transform_artifacts and not self._loaded:
             raise PipelineError("execute load successfully before writing transformations")
@@ -209,7 +277,8 @@ class ELTEpisodeState:
         if not self.task.partial_transforms:
             return f"saved {path}"
         stage = "load" if path in self.task.load_artifacts else "transform"
-        return f"saved {path} ({len(encoded)} bytes). Next: execute_pipeline with stage={stage}."
+        target_args = f" and file={path}" if stage == "transform" else ""
+        return f"saved {path} ({len(encoded)} bytes). Next: execute_pipeline with stage={stage}{target_args}."
 
     def _read(self, names: tuple[str, ...]) -> dict[str, str]:
         missing = [name for name in names if not (self.artifact_dir / name).is_file()]
@@ -218,9 +287,9 @@ class ELTEpisodeState:
         return {name: (self.artifact_dir / name).read_text(encoding="utf-8") for name in names}
 
     def _execute(self, stage: str, turn: int, file: str | None = None) -> str:
-        if file is not None and (stage != "transform" or file not in self.task.transform_artifacts):
-            raise PipelineError("file must be an approved SQL filename used with stage=transform")
         if stage == "load":
+            if file is not None and file not in self.task.load_artifacts:
+                raise PipelineError("for stage=load, omit file or use " + ", ".join(self.task.load_artifacts))
             if self.task.partial_transforms and self._loaded:
                 return "load.json is already loaded. Save the required SQL files and execute transform."
             self._loaded = False
@@ -230,13 +299,22 @@ class ELTEpisodeState:
             self._loaded = True
             return result
         if stage == "transform":
+            if file is not None and file not in self.task.transform_artifacts:
+                raise PipelineError("for stage=transform, use a saved SQL filename: "
+                                    + ", ".join(self.task.transform_artifacts))
             self._tested_turn = None
             if not self._loaded:
                 raise PipelineError("execute load successfully first")
             names = (file,) if file is not None else self.task.transform_artifacts
             if file is not None:
                 self._tested_files.pop(file, None)
-            result = self.backend.execute("transform", self._read(names))
+            try:
+                result = self.backend.execute("transform", self._read(names))
+            except PartialTransformError as error:
+                self._tested_files.update(dict.fromkeys(
+                    (name for name in error.tested_files if name in names), turn,
+                ))
+                raise
             self._tested_turn = turn
             self._tested_files.update(dict.fromkeys(names, turn))
             if self.task.partial_transforms:

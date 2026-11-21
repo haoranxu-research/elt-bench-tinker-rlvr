@@ -137,6 +137,30 @@ def test_terminal_rollout_cannot_start_grading_again(tmp_path, end):
     asyncio.run(run())
 
 
+def test_books_text_only_turn_gets_one_tool_reminder(tmp_path):
+    async def run():
+        task = replace(local_task(), task_id="books", partial_transforms=True)
+        builder = ELTGroupBuilder(EpisodeConfig(tmp_path), cast(Renderer, ScriptedRenderer()), 1,
+                                  task_factory=lambda: task)
+        env, = await builder.make_envs()
+        episode, = builder.episodes
+        try:
+            await env.initial_observation()
+            reminder = await env.step(list(b"[]"))
+            assert not reminder.episode_done and reminder.metrics["text_recovery"] == 1
+            messages = json.loads(bytes(reminder.next_observation.to_ints()))
+            assert "No tool call was received" in messages[-1]["content"]
+            assert "23 turns left" in messages[-1]["content"]
+            assert episode.grade().reward == 0 and not episode.submitted_files
+            terminal = await env.step(list(b"[]"))
+            assert terminal.episode_done and terminal.reward == 0
+            assert not list(episode.workspace.glob("submission-*"))
+        finally:
+            await builder.cleanup()
+
+    asyncio.run(run())
+
+
 def test_official_tool_trace_retains_feedback_even_without_submission(tmp_path):
     async def run():
         builder = ELTGroupBuilder(
@@ -176,6 +200,7 @@ def test_unsubmitted_official_artifact_is_retained_with_no_graded_files(tmp_path
         try:
             await env.initial_observation()
             await env.step(list(json.dumps(actions[:4]).encode()))
+            assert not (await env.step(list(b"[]"))).episode_done
             result = await env.step(list(b"[]"))
             assert result.episode_done and result.reward == 0
         finally:
