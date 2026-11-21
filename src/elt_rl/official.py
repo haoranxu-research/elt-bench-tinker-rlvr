@@ -332,6 +332,29 @@ class SnowflakeBooksBackend:
                 f"against {source_rows} source rows, with {missing_ids} source IDs missing. "
                 "Check the grain of each CTE and join.")
 
+    def author_page_check(self, sources: dict[str, list[str]]) -> str | None:
+        required = {"book": {"book_id", "num_pages"}, "book_author": {"author_id", "book_id"}}
+        if not all(columns <= set(sources.get(table, ())) for table, columns in required.items()):
+            return None
+        # With nonnegative page counts and at least one positive authored book,
+        # authors with no book relationship are necessarily below the average.
+        schema = f"{self.database}.BOOKS."
+        flag = "CAST(o.wrote_fewer_total_pages_than_the_average AS VARCHAR)"
+        (failures,), = self._lookup_rows(
+            f"SELECT COUNT(*) FROM {schema}authors o WHERE NOT EXISTS "
+            f"(SELECT 1 FROM {schema}book_author ba WHERE ba.author_id = o.author_id) "
+            f"AND COALESCE(TRY_CAST({flag} AS DOUBLE), 0) <> 1 "
+            f"AND LOWER(COALESCE({flag}, '')) <> 'true' "
+            f"AND EXISTS (SELECT 1 FROM {schema}book b JOIN {schema}book_author ba "
+            "ON b.book_id = ba.book_id WHERE b.num_pages > 0) "
+            f"AND NOT EXISTS (SELECT 1 FROM {schema}book WHERE num_pages < 0)"
+        )
+        if failures:
+            return (f"{failures} authors with no related books are marked as not below the page average. "
+                    "Their page total is zero and some authors have positive page totals. "
+                    "Check the preserved author key, the input population of the average, and the final comparison.")
+        return None
+
     def _clear(self) -> None:
         if self.airbyte:
             self.airbyte.cleanup()

@@ -133,6 +133,8 @@ class ELTEpisodeState:
         self._tested_turn: int | None = None
         self._tested_files: dict[str, int] = {}
         self._unattempted_files: set[str] = set()
+        self._failed_public_checks: dict[str, str] = {}
+        self._requested_public_review: set[str] = set()
         self._last_turn = 0
         self._calls = 0
         self._submission_attempts = 0
@@ -409,11 +411,13 @@ class ELTEpisodeState:
         target.write_bytes(encoded)
         self._tested_turn = None
         self._tested_files.pop(path, None)
+        self._failed_public_checks.pop(path, None)
         if self.task.partial_transforms and path in self.task.transform_artifacts:
             self._unattempted_files.add(path)
         if path in self.task.load_artifacts:
             self._loaded = False
             self._tested_files.clear()
+            self._failed_public_checks.clear()
             self.warehouse_columns.clear()
             self.source_labels = ""
         if not self.task.partial_transforms:
@@ -475,6 +479,13 @@ class ELTEpisodeState:
                     from .official_sql import public_sql_review
 
                     for filename, sql in artifacts.items():
+                        self._failed_public_checks.pop(filename, None)
+                        if (filename == "authors.sql" and hasattr(self.backend, "author_page_check")
+                                and "average total pages of all authors" in self.task.sections.get("authors", "").lower()):
+                            problem = self.backend.author_page_check(self.warehouse_columns)
+                            if problem:
+                                self._failed_public_checks[filename] = problem
+                                feedback += f"\n{filename}: Public data check failed. {problem}"
                         for note in public_sql_review(sql, self.task.sections.get(filename.removesuffix(".sql"), "")):
                             feedback += f"\n{filename}: {note}"
                 return feedback
@@ -507,14 +518,22 @@ class ELTEpisodeState:
             if mode == "complete" and ready != names:
                 missing = ", ".join(name for name in names if name not in ready)
                 raise PipelineError(f"test these current SQL files on an earlier turn: {missing}. Or submit with mode=partial.")
-            if (mode == "partial" and self._unattempted_files and not self.finalizing
-                    and self.config.max_turns - turn >= 2 and self.config.max_tool_calls - self._calls >= 2
-                    and getattr(self.backend, "remaining_transform_attempts", None) != 0
-                    and (self.sampled_tokens_left is None or self.sampled_tokens_left[0] - self.sampled_tokens_left[1] >= 128)):
+            can_repair = (not self.finalizing and self.config.max_turns - turn >= 2
+                          and self.config.max_tool_calls - self._calls >= 2
+                          and getattr(self.backend, "remaining_transform_attempts", None) != 0
+                          and (self.sampled_tokens_left is None
+                               or self.sampled_tokens_left[0] - self.sampled_tokens_left[1] >= 128))
+            if mode == "partial" and self._unattempted_files and can_repair:
                 drafts = ", ".join(name for name in names if name in self._unattempted_files)
                 raise PipelineError(f"Test the newly saved SQL before partial submission: {drafts}. "
                                     "Call execute_pipeline with stage=transform and that filename. "
                                     "If it fails, you can still submit the tested subset.")
+            if can_repair:
+                for name in ready:
+                    if name in self._failed_public_checks and name not in self._requested_public_review:
+                        self._requested_public_review.add(name)
+                        raise PipelineError(f"Review {name} before submitting. {self._failed_public_checks[name]} "
+                                            "Keep your other tested SQL files. You can still submit after this review.")
             names = ready
         elif self._tested_turn is None or self._tested_turn >= turn:
             raise PipelineError("successfully execute current artifacts in an earlier turn before submitting")

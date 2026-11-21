@@ -448,6 +448,26 @@ def test_books_output_shape_checks_public_columns_and_source_ids():
     assert backend.output_shape("authors", ("author_id", "author_name")) is None
 
 
+def test_public_author_page_check_uses_source_relationships_and_candidate_flag():
+    duckdb = pytest.importorskip("duckdb")
+    backend = official.SnowflakeBooksBackend.__new__(official.SnowflakeBooksBackend)
+    backend.database = "memory"
+    with duckdb.connect() as db:
+        db.execute("CREATE SCHEMA books")
+        db.execute("CREATE TABLE books.book AS SELECT 1 AS book_id, 100 AS num_pages")
+        db.execute("CREATE TABLE books.book_author AS SELECT 10 AS author_id, 1 AS book_id")
+        db.execute("CREATE TABLE books.authors AS SELECT * FROM (VALUES (10, 0), (20, 0), (30, 1)) "
+                   "v(author_id, wrote_fewer_total_pages_than_the_average)")
+        backend._lookup_rows = lambda query: db.execute(query).fetchall()
+        sources = {"book": ["book_id", "num_pages"], "book_author": ["author_id", "book_id"]}
+        assert backend.author_page_check(sources).startswith("1 authors with no related books")
+        db.execute("UPDATE books.authors SET wrote_fewer_total_pages_than_the_average = 1 WHERE author_id = 20")
+        assert backend.author_page_check(sources) is None
+        db.execute("UPDATE books.book SET num_pages = 0")
+        db.execute("UPDATE books.authors SET wrote_fewer_total_pages_than_the_average = 0")
+        assert backend.author_page_check(sources) is None
+
+
 def test_books_accepts_boolean_join_and_filter_conditions():
     sql = safe_select(
         "SELECT c.id FROM customer c LEFT JOIN address a ON c.id = a.id AND a.active = 1 "
