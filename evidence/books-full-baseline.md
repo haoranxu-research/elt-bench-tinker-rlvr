@@ -371,3 +371,58 @@ tokens, and warehouse attempts. It permits explicit partial submission
 after that test fails and in the reserved submission phase. Token use
 was 6,014 sampled, 82,176 cached input, and 15,098 uncached input.
 The estimate was USD 0.02221863.
+
+## Seventh 35B rehearsal
+
+Run `runs/books-full-baseline/stronger-07` used revision `30957bb`,
+23 model turns, 48 tool calls, and a 9,216-token context cap. The
+USD 0.11179008 quote fit USD 0.11306307 remaining. All 15 tables loaded
+and the model wrote, executed, and independently submitted all three
+files on turn 19. Stage 1 was 1.0, Stage 2 was 2/3, and the reward was
+0.7833333333333333. The customer and publisher models matched. Six of
+seven author columns matched, including the average-sale-price flag.
+The page classification remained incorrect for 169 authors. The query
+used a left join but projected the nullable relationship-table author
+ID. This collapsed unmatched authors into a single NULL group.
+
+A private comparison preserved the source author's identifier and
+eliminated all 169 differences. The candidate-SQL advisory now recognizes
+this exact public-schema mistake and points out the nullable identifier in
+the receipt. This diagnostic does not reveal expected output or change
+grading. The audited hosted run used 4,630 sampled, 75,520 cached input,
+and 13,578 uncached input tokens, estimated at USD 0.01908795. All 28
+executed tools, 26 eligible receipts and the saved SQL matched the trace.
+The full suite after the follow-up passed 98 tests in 35.18 seconds with
+`pytest -q --tb=short --basetemp .venv/books-author-key`.
+
+## Eighth 35B rehearsal and authorization limit
+
+Run `runs/books-full-baseline/stronger-08` used revision `f904e7b`,
+20 model turns, 48 tool calls, the no-thinking renderer, and an
+8,192-token context cap. The read-only quote was USD 0.09013248
+against USD 0.09397512 remaining. The model loaded all 15 tables.
+It validated the publisher output, hit a grouping error in its customer
+draft, and saved a repair without testing it before the turn deadline.
+It submitted only the tested publisher file on turn 20. Stage 1 was 1.0,
+Stage 2 was 1/3, and the reward was 0.5666666666666667. The model did not
+write an author file in this run, so the author-key repair has offline
+evidence only. The audit matched all 20 responses, 28 tool calls, and
+23 eligible receipts to the trace. The maximum context consumption
+including the margin was 8,191. Recorded usage was 4,044 sampled,
+64,000 cached input, and 14,409 uncached input tokens, estimated at
+USD 0.01764279. No billing rows had posted.
+
+The best model-driven outcome remains Stage 1 = 1.0 and Stage 2 = 2/3.
+Several genuine complete submissions matched six of the seven author
+columns. The missing column varies across runs. The developer-only
+controls that isolate individual discrepancies do not count toward the
+model-driven acceptance target.
+
+The six 35B rehearsals from `stronger-03` through `stronger-08` used
+an estimated USD 0.16366767 in total. Runs 04 through 08 used an
+estimated USD 0.13991649 after the disconnect. Each session's quote
+was checked against the cumulative USD 0.24 authorization before
+launch. USD 0.07633233 remains, below the USD 0.09013248 bound of the
+smallest tested profile. Shortening that last profile had already
+left the agent without time to test its customer repair or write the
+author file. No further hosted run or Snowflake workload started.
