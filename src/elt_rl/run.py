@@ -20,6 +20,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("mode", choices=("official-rollout", "train-one"))
     parser.add_argument("--allow-paid", action="store_true", help="Confirm authorized Tinker usage")
     parser.add_argument("--allow-warehouse", action="store_true", help="Confirm authorized Snowflake and Airbyte usage")
+    parser.add_argument("--preflight-only", action="store_true", help="Check configuration and Tinker metadata without a session")
+    parser.add_argument("--rollout-seconds", type=int, help="Official rollout wall-clock limit, up to 3600 seconds")
     parser.add_argument("--budget-usd", type=float, required=True, help="Maximum estimated Tinker token cost")
     parser.add_argument("--out", type=Path, required=True, help="New private directory for run evidence")
     parser.add_argument("--env-file", type=Path, default=Path(".env"))
@@ -29,8 +31,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--group-size", type=int, choices=(2, 3, 4), default=3)
     args = parser.parse_args(argv)
     official = args.mode == "official-rollout"
-    if not args.allow_paid or (official and not args.allow_warehouse):
+    if not args.preflight_only and (not args.allow_paid or (official and not args.allow_warehouse)):
         parser.error("explicit --allow-paid is required, plus --allow-warehouse for official-rollout")
+    if args.rollout_seconds is not None and (not official or not 1 <= args.rollout_seconds <= 3600):
+        parser.error("--rollout-seconds is only for official-rollout and must be between 1 and 3600")
     if not math.isfinite(args.budget_usd) or args.budget_usd <= 0:
         parser.error("--budget-usd must be finite and positive")
     try:
@@ -72,14 +76,14 @@ def main(argv: list[str] | None = None) -> int:
                 Path(work_root), max_turns=24 if official else PILOT_TURNS, max_tool_calls=32,
                 execution_seconds=60 if official else 1,
                 # A full six-connection load precedes submission, which repeats it in isolation.
-                rollout_seconds=3600 if official else 120,
+                rollout_seconds=(args.rollout_seconds or 3600) if official else 120,
                 max_submissions=1 if official else 2,
             )
             (out / "pipelines").mkdir(mode=0o700)
             return asyncio.run(run_remote(
                 args.mode, task, config, out, model, args.renderer, 1 if official else args.group_size,
                 args.budget_usd, record, api_key=settings["TINKER_API_KEY"],
-                project_id=settings["TINKER_PROJECT_ID"] or None, seed=args.seed,
+                project_id=settings["TINKER_PROJECT_ID"] or None, seed=args.seed, preflight_only=args.preflight_only,
             ))
     except (KeyboardInterrupt, Exception) as exc:
         cause = type(exc).__name__

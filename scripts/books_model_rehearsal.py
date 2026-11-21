@@ -3,6 +3,8 @@
 import argparse
 import asyncio
 import json
+import math
+from datetime import datetime, timezone
 from pathlib import Path
 from time import monotonic
 from urllib.request import Request, urlopen
@@ -11,14 +13,18 @@ import duckdb
 from sqlglot import transpile
 from sqlglot.errors import SqlglotError
 
-from books_evaluator_smoke import evaluate_local, load_local_inputs, result_fields, save_result
+from books_evaluator_smoke import REFERENCE_HASHES, evaluate_local, load_local_inputs, result_fields, save_result, sha256
 from elt_rl.airbyte import streams
-from elt_rl.contracts import EpisodeConfig, PartialTransformError, PipelineError, TokenBudget
+from elt_rl.contracts import EpisodeConfig, PartialTransformError, TokenBudget
 from elt_rl.cookbook import ELTGroupBuilder
 from elt_rl.episode import BOOKS_INSTRUCTION, BOOKS_REQUEST
 from elt_rl.official import SnowflakeBooksBackend, _read_yaml, books_task_definition, check_checkout
 from elt_rl.rendering import make_renderer
-from elt_rl.settings import DEFAULT_RENDERER
+from elt_rl.settings import DEFAULT_RENDERER, ConfigurationError, read_settings
+
+
+HOSTED_BUDGET = TokenBudget(context=12_288, sampled=6_144)
+HOSTED_TURNS = 20
 
 
 class LocalBooksBackend(SnowflakeBooksBackend):
@@ -163,6 +169,44 @@ async def run_cookbook_tokens(args, env, renderer, budget, config):
     return turn, sampled, "max_turns"
 
 
+async def run_hosted(args, task, bundle, assets, expected, evaluator_calls):
+    from elt_rl.training import run_remote
+
+    settings = read_settings(args.env_file)
+    if not settings["TINKER_API_KEY"]:
+        raise ConfigurationError("set TINKER_API_KEY in the environment or local .env")
+    for name, digest in REFERENCE_HASHES.items():
+        if sha256(assets / "gt_snowflake" / "books" / f"{name}.csv") != digest:
+            raise ConfigurationError("local rehearsal reference does not match the pinned dataset")
+    with LocalBooksBackend(bundle, assets).connection as connection:
+        load_local_inputs(connection, assets, expected)
+        for table, count in expected.items():
+            if connection.execute(f'SELECT COUNT(*) FROM books."{table}"').fetchone()[0] != count:
+                raise ConfigurationError(f"staged rehearsal row count does not match for {table}")
+
+    manifest = {"mode": "books-rehearsal", "warehouse": "duckdb_transport", "staged_rows": sum(expected.values())}
+
+    def record(**updates):
+        manifest.update(updates, updated_utc=datetime.now(timezone.utc).isoformat())
+        temp = args.out / "manifest.tmp"
+        temp.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        temp.replace(args.out / "manifest.json")
+
+    config = EpisodeConfig(args.out / "work", max_turns=HOSTED_TURNS, max_tool_calls=32,
+                           rollout_seconds=600, max_submissions=1)
+    try:
+        result = await run_remote(
+            "books-rehearsal", task, config, args.out, args.model, DEFAULT_RENDERER, 1, args.budget_usd, record,
+            api_key=settings["TINKER_API_KEY"], project_id=settings["TINKER_PROJECT_ID"] or None,
+            token_budget=HOSTED_BUDGET, preflight_only=args.preflight_only,
+        )
+        record(evaluator_queries=evaluator_calls)
+        return result
+    except (Exception, KeyboardInterrupt) as error:
+        record(status="interrupted" if isinstance(error, KeyboardInterrupt) else "failed", error_type=type(error).__name__)
+        raise
+
+
 async def run(args):
     checkout = args.checkout.resolve()
     assets = args.assets.resolve()
@@ -185,10 +229,12 @@ async def run(args):
     args.out.mkdir(parents=True)
     pipelines = args.out / "pipelines"
     pipelines.mkdir()
+    task = books_task_definition(checkout, bundle, open_backend, verify)
+    if args.hosted:
+        return await run_hosted(args, task, bundle, assets, expected, evaluator_calls)
     renderer = make_renderer(args.model, DEFAULT_RENDERER, offline=True)
     budget = TokenBudget()
     config = EpisodeConfig(args.out / "work", max_turns=24, max_tool_calls=32, max_submissions=1)
-    task = books_task_definition(checkout, bundle, open_backend, verify)
     builder = ELTGroupBuilder(config, renderer, 1, task_factory=lambda: task, budget=budget, evidence_dir=pipelines)
     env, = await builder.make_envs()
     episode, = builder.episodes
@@ -221,4 +267,21 @@ if __name__ == "__main__":
     parser.add_argument("--local-model", default="qwen3.5:9b")
     parser.add_argument("--native-tools", action="store_true", help="Use Ollama tool rendering with the same dispatcher")
     parser.add_argument("--port", type=int, default=11435)
-    raise SystemExit(asyncio.run(run(parser.parse_args())))
+    parser.add_argument("--hosted", action="store_true", help="Use Tinker sampling and local DuckDB")
+    parser.add_argument("--preflight-only", action="store_true", help="Check hosted prerequisites without creating a session")
+    parser.add_argument("--allow-paid", action="store_true", help="Confirm authorization for one hosted rehearsal")
+    parser.add_argument("--budget-usd", type=float, default=0.08)
+    parser.add_argument("--env-file", type=Path, default=Path(".env"))
+    args = parser.parse_args()
+    if args.hosted:
+        if args.native_tools or not (args.preflight_only or args.allow_paid):
+            parser.error("--hosted requires --preflight-only or explicit --allow-paid and uses the pinned tool protocol")
+        if not math.isfinite(args.budget_usd) or args.budget_usd <= 0:
+            parser.error("--budget-usd must be finite and positive")
+    elif args.preflight_only or args.allow_paid:
+        parser.error("hosted flags require --hosted")
+    try:
+        raise SystemExit(asyncio.run(run(args)))
+    except (Exception, KeyboardInterrupt) as error:
+        detail = str(error) if isinstance(error, ConfigurationError) else type(error).__name__
+        parser.exit(1, f"Rehearsal stopped ({detail}). See the private output directory.\n")

@@ -1,5 +1,8 @@
 # Books submission workflow and model readiness
 
+This is the record of the local-model investigation. The next rehearsal
+uses hosted sampling. [Updated launch evidence](books-hosted-readiness.md)
+
 ## Scope and outcome
 
 The November 21 credentialed attempt used genuine Tinker samples and loaded

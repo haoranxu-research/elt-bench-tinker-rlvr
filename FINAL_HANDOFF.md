@@ -47,15 +47,40 @@ skipped all model queries. [Commands and evidence](evidence/books-final-audit.md
 - Authorization covered one sampling-only rollout and its Snowflake
   loading and grading replay, with Airbyte retry limits set to one attempt.
 
+## Hosted 9B rehearsal
+
+The next run is one Tinker sampling session on the base
+`Qwen/Qwen3.5-9B`, after authorization. The same tools and tokenizer as
+the official run execute against DuckDB on the staged `books` data.
+The pinned evaluator scores the model's own submission through local
+transport. The model receives public schemas and tool feedback.
+Reference CSVs stay with the evaluator. Check the tool trace for the
+model's file writes, execution results, and explicit accepted
+submission, and inspect both evaluator stages before launching Snowflake.
+
+```powershell
+$env:HF_HOME = (Resolve-Path runs/books-offline-model/hf).Path
+$env:HF_HUB_OFFLINE = '1'
+$env:TRANSFORMERS_OFFLINE = '1'
+.\.venv\Scripts\python.exe -c 'from pathlib import Path; import sys,runpy; sys.path.append(str(Path(sys.base_prefix)/""Lib""/""site-packages"")); sys.path.insert(0,""scripts""); sys.path.append("".venv-core/Lib/site-packages""); runpy.run_path(""scripts/books_model_rehearsal.py"",run_name=""__main__"")' --hosted --allow-paid --budget-usd 0.08 --checkout ../upstream-elt-bench --assets runs/books-assets --out runs/books-9b-rehearsal-live
+```
+
+The uncached estimate is **USD 0.078686208** for at most 20 turns,
+12,288 context tokens, and 6,144 sampled tokens. This uses no Snowflake
+compute. Only the pinned public tokenizer is needed locally.
+Both launch commands accept `--preflight-only` in place of the paid
+flags. Use a fresh evidence directory for each command.
+
 ## Final live command
 
 The authoritative model entry point is `elt_rl.run official-rollout`.
 The pending candidate is the base `Qwen/Qwen3.5-9B` with its pinned
 no-thinking renderer. The runner writes exact prompt token IDs and
 sampled actions to an ignored run directory. It permits one group member,
-24 turns, 32 tool calls, and one explicit grading replay. Verify model
-readiness and warehouse allowance and obtain approval before running this
-command. [Official setup](LIVE_SETUP.md#official-snowflake-books)
+24 turns, 32 tool calls, one explicit grading replay, and a 40-minute
+rollout timeout. Run after reviewing the hosted rehearsal and receiving
+separate approval for Snowflake and Tinker.
+[Official setup](LIVE_SETUP.md#official-snowflake-books)
 
 ```powershell
 $private = Join-Path $env:LOCALAPPDATA 'ELTBenchBooks'
@@ -70,7 +95,7 @@ $env:CHECKPOINT_DISABLE = '1'
 $env:HF_HOME = (Resolve-Path runs/books-offline-model/hf).Path
 $env:HF_HUB_OFFLINE = '1'
 $env:TRANSFORMERS_OFFLINE = '1'
-.\.venv\Scripts\python.exe -c 'from pathlib import Path; import sys; sys.path.append(str(Path(sys.base_prefix)/""Lib""/""site-packages"")); from elt_rl.run import main; raise SystemExit(main())' official-rollout --allow-paid --allow-warehouse --budget-usd 0.15 --model Qwen/Qwen3.5-9B --renderer qwen3_5_disable_thinking --out runs/books-official-qwen9b-001 2>&1 | ForEach-Object ToString | Tee-Object runs/books-official-qwen9b-001-console.txt
+.\.venv\Scripts\python.exe -c 'from pathlib import Path; import sys; sys.path.append(str(Path(sys.base_prefix)/""Lib""/""site-packages"")); from elt_rl.run import main; raise SystemExit(main())' official-rollout --allow-paid --allow-warehouse --rollout-seconds 2400 --budget-usd 0.15 --model Qwen/Qwen3.5-9B --renderer qwen3_5_disable_thinking --out runs/books-official-qwen9b-001 2>&1 | ForEach-Object ToString | Tee-Object runs/books-official-qwen9b-001-console.txt
 ```
 
 The runner checks current rates before creating a Tinker session. The
@@ -80,10 +105,13 @@ credits to load and execute without grading. Two comparable passes give
 **0.50–0.64 credits** as a planning range before headroom for grading and
 cleanup. A continuously active standard Gen1 X-Small warehouse uses
 1 credit in 60 minutes. The refreshed administrator console confirmed
-attachment and approximately 0.79 credits until immediate suspension.
-That covers the estimated compute range with limited grading headroom.
-It would not cover uninterrupted use for the full timeout.
-[Read-only check and administrator SQL](evidence/books-model-readiness.md#read-only-cloud-checks)
+attachment and approximately 0.78 credits until immediate suspension.
+Forty minutes of continuous Gen1 X-Small compute is 0.667 credits.
+The monitor remains the backstop for in-flight work, resume minimums,
+other metered usage, and cleanup. The two Tinker bounds sum to
+**USD 0.203261952** at checked rates. The requested Tinker caps sum to
+**USD 0.23** across the two runs.
+[Latest checks and commands](evidence/books-hosted-readiness.md)
 [Tinker rate card](https://tinker-docs.thinkingmachines.ai/tinker/models.json) ·
 [Snowflake warehouse billing](https://docs.snowflake.com/en/user-guide/warehouses-overview#impact-on-credit-usage-and-billing)
 

@@ -66,7 +66,7 @@ INITIAL_INSTRUCTION = (
 )
 BOOKS_INSTRUCTION = (
     "Use tools to complete the ELT task. Start with read_task. Save load.json with write_pipeline_file, "
-    "then execute_pipeline with stage=load. "
+    "wait for a successful save receipt, then execute_pipeline with stage=load. "
     "Use bare filenames for every tool, without directory prefixes. Read the relevant source and model sections. "
     "For each model, use write_pipeline_file(path, content) to save the full SQL query, then test just "
     "that file with execute_pipeline(stage=transform, file=filename). Rewrite the named file when it fails. "
@@ -230,6 +230,21 @@ class ELTEpisodeState:
                 key, values = choices[name]
                 if values:
                     schema["properties"][key]["enum"] = list(values)
+        if name == "write_pipeline_file" and self.task.load_streams:
+            content = schema["properties"]["content"]
+            content["description"] = (
+                'For load.json, pass an object such as {"sources":{"postgres":["address"]}}. '
+                "This example shows the shape. Include all groups and stream arrays from read_task. "
+                "For each .sql file, pass the full SELECT as a string."
+            )
+            content.pop("type")
+            content["anyOf"] = [
+                {"type": "string"},
+                {"type": "object", "required": ["sources"], "additionalProperties": False,
+                 "properties": {"sources": {"type": "object", "minProperties": 1,
+                                "additionalProperties": {"type": "array", "minItems": 1,
+                                                         "items": {"type": "string"}}}}},
+            ]
         return schema
 
     def _read_task_section(self, section: str) -> str:
@@ -265,6 +280,13 @@ class ELTEpisodeState:
             raise PipelineError("artifact must be valid UTF-8") from None
         if len(encoded) > self.config.max_artifact_bytes:
             raise PipelineError("artifact exceeds size limit")
+        if path == "load.json" and self.task.load_streams:
+            from .airbyte import select_streams
+
+            try:
+                select_streams(content, self.task.load_streams)
+            except PipelineError as error:
+                raise PipelineError(f"{error} load.json was not changed.") from None
         target = self.artifact_dir / path
         if self.task.partial_transforms and target.is_file() and target.read_bytes() == encoded:
             return f"{path} already contains these bytes. Use list_workspace to check execution status."

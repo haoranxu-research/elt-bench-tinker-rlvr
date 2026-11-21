@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import time
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -43,7 +44,7 @@ def streams(config: dict) -> dict[str, dict[str, str]]:
     return result
 
 
-def select_streams(text: str, available: dict[str, dict[str, str]]) -> dict[str, list[str]]:
+def select_streams(text: str, available: Mapping[str, Mapping[str, str]]) -> dict[str, list[str]]:
     try:
         payload = json.loads(text)
     except (ValueError, RecursionError):
@@ -51,16 +52,21 @@ def select_streams(text: str, available: dict[str, dict[str, str]]) -> dict[str,
             "load.json must contain valid JSON. Use write_pipeline_file to replace it with a sources object "
             "using the groups and streams from read_task."
         ) from None
+    group = next(iter(available))
+    stream = next(iter(available[group]))
+    example = json.dumps({"sources": {group: [stream]}})
     if not isinstance(payload, dict) or set(payload) != {"sources"}:
-        raise PipelineError("load.json must contain a sources object")
+        raise PipelineError(f"load.json requires exactly one top-level key, sources. Example shape: {example}. "
+                            "Use write_pipeline_file to include every group and stream listed by read_task.")
     selected = payload["sources"]
     if not isinstance(selected, dict) or not selected or not selected.keys() <= available.keys():
-        raise PipelineError("choose one or more approved source groups")
+        raise PipelineError("sources must be a nonempty object using approved groups: " + ", ".join(available))
     for group, names in selected.items():
         if (not isinstance(names, list) or not names or
             any(not isinstance(name, str) or name not in available[group] for name in names) or
             len(set(names)) != len(names)):
-            raise PipelineError("source groups require unique approved stream names")
+            raise PipelineError(f"source groups require unique approved stream names. For {group}, use a nonempty "
+                                f"array containing names from: {', '.join(available[group])}.")
     return selected
 
 

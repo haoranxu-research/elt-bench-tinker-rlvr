@@ -234,9 +234,10 @@ async def run_remote(
     mode: str, task: TaskDefinition, config: EpisodeConfig, out: Path, model: str,
     renderer_name: str, members: int, max_usd: float, record: Callable[..., None],
     *, api_key: str, project_id: str | None = None, seed: int = 0,
+    token_budget: TokenBudget | None = None, preflight_only: bool = False,
 ) -> int:
     train = mode == "train-one"
-    budget = PILOT_BUDGET if train else TokenBudget()
+    budget = token_budget or (PILOT_BUDGET if train else TokenBudget())
     prices = await asyncio.to_thread(fetch_model_pricing, model, timeout=25.0)
     if prices is None:
         raise ConfigurationError("live pricing unavailable for this model")
@@ -261,6 +262,11 @@ async def run_remote(
         raise ConfigurationError("configured Tinker project does not support this model for the requested action")
     if supported.max_context_length and supported.max_context_length < budget.context:
         raise ConfigurationError("model context length is smaller than the rollout budget")
+    if preflight_only:
+        record(status="read_only_preflight_passed", sampleable=supported.sampleable,
+               max_context_length=supported.max_context_length, session_creation="not_started")
+        print(f"Read-only preflight passed for {model}. Estimated uncached token bound: USD {estimate:.8f}.")
+        return 0
     with single_attempt_sdk(), tinker.ServiceClient(
         display_name=f"elt-{mode}", api_key=api_key, project_id=project_id, base_url=DEFAULT_BASE_URL,
     ) as service:

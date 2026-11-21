@@ -437,6 +437,7 @@ def books_task_definition(checkout, public, open_backend, verify) -> TaskDefinit
     instructions = (
         "Official ELT-Bench Snowflake task: books. Write load.json with a top-level "
         "sources object. In sources, map each listed group to an array of all its stream names. "
+        "Pass the object as content in write_pipeline_file with path=load.json. "
         "Stage 2 requires every stream to pass Stage 1. Run the load stage. "
         "Read the model sections, then write publishers.sql, customers.sql and authors.sql "
         "as one Snowflake SELECT each using unqualified raw table names. Ordinary SQL joins, "
@@ -449,4 +450,5 @@ def books_task_definition(checkout, public, open_backend, verify) -> TaskDefinit
     return TaskDefinition(
         "books", instructions, ("load.json",), tuple(f"{name}.sql" for name in MODELS),
         open_backend, verify, _source_sections(checkout, public), partial_transforms=True,
+        load_streams=available,
     )

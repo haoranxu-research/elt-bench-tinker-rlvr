@@ -523,8 +523,10 @@ differ from billed credits. [Warehouse metering](https://docs.snowflake.com/en/s
 For the proposed Qwen3.5-9B rollout, use the pinned no-thinking renderer
 and cache the public tokenizer on S before launch. The account's
 read-only capabilities response confirms base-model sampling availability.
-The candidate rehearsal and monitor requirements are recorded separately.
-[Model readiness and administrator checks](evidence/books-model-readiness.md)
+Use Tinker sampling with the local DuckDB backend for the candidate
+rehearsal. The prepared official command sets a 40-minute rollout limit
+for the verified monitor allowance.
+[Hosted rehearsal and monitor checks](evidence/books-hosted-readiness.md)
 
 The second November 20 credentialed attempt loaded all 15 streams into
 Snowflake. Validation of the sampled transformations blocked submission.

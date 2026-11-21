@@ -80,3 +80,4 @@ class TaskDefinition:
     verify: Callable[[WarehouseBackend], Grade]
     sections: Mapping[str, str] = field(default_factory=dict)
     partial_transforms: bool = False
+    load_streams: Mapping[str, Mapping[str, str]] = field(default_factory=dict)

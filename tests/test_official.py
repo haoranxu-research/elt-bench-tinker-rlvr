@@ -95,6 +95,43 @@ def test_official_books_public_task_and_airbyte_plan(checkout, tmp_path, monkeyp
         select_streams('{"sources":{"postgres":["../gold"]}}', available)
 
 
+def test_books_malformed_model_manifest_does_not_replace_saved_sources(checkout, tmp_path):
+    bundle = official._read_yaml(checkout / "elt-bench/snowflake/books/config.yaml")
+    loaded = []
+
+    class NoWarehouse:
+        def execute(self, stage, artifacts):
+            assert stage == "load"
+            loaded.append(select_streams(artifacts["load.json"], streams(bundle)))
+            return "loaded"
+
+        def inspect(self):
+            return ""
+
+        def close(self):
+            pass
+
+    task = official.books_task_definition(checkout, bundle, lambda *_: NoWarehouse(), lambda _: Grade())
+    with ELTEpisodeState(task, EpisodeConfig(tmp_path)) as episode:
+        episode.dispatch("read_task", {}, turn=1)
+        schema = episode.tool_schema("write_pipeline_file")["properties"]["content"]
+        assert schema["anyOf"][1]["required"] == ["sources"]
+        malformed = {"path": "load.json", "content": "{}"}
+        result = episode.dispatch("write_pipeline_file", malformed, turn=2)
+        assert 'Example shape: {"sources":' in result.text and "was not changed" in result.text
+        assert not (episode.artifact_dir / "load.json").exists()
+        assert "write missing files" in episode.dispatch("execute_pipeline", {"stage": "load"}, turn=3).text
+        invalid = {"path": "load.json", "content": {"sources": {"postgres": "address"}}}
+        assert "For postgres, use a nonempty array" in episode.dispatch("write_pipeline_file", invalid, turn=4).text
+        sources = {group: list(tables) for group, tables in streams(bundle).items()}
+        corrected = {"path": "load.json", "content": {"sources": sources}}
+        assert "saved load.json" in episode.dispatch("write_pipeline_file", corrected, turn=5).text
+        assert "was not changed" in episode.dispatch("write_pipeline_file", malformed, turn=6).text
+        assert not loaded
+        assert "loaded" in episode.dispatch("execute_pipeline", {"stage": "load"}, turn=7).text
+        assert loaded == [sources]
+
+
 @pytest.mark.parametrize("bad_count", [False, True])
 def test_books_source_probe_checks_every_row_count_and_cleans_up(checkout, tmp_path, monkeypatch, bad_count):
     config, groups = source_probe._expectations(checkout)
