@@ -80,10 +80,13 @@ BOOKS_INSTRUCTION = (
     "Use percentage points (100.0 times the ratio) for a percentage. Keep precision unless rounding is requested. "
     "Audit that numerator and denominator use the same source grain. For one row per entity, aggregate each measure at its "
     "own grain before joining, and use a ROW_NUMBER CTE for a ranked row rather than correlated ORDER BY/LIMIT. "
+    "Check that a join to a finer grain has not duplicated the records counted or summed. A group rank needs PARTITION BY. "
+    "Use explicit NULL ordering for ranked rows when needed and examine whether an inner join drops entities without related rows. "
     "For each model, use write_pipeline_file(path, content) to save the full SQL query, then test just "
     "that file with execute_pipeline(stage=transform, file=filename). Rewrite the named file when it fails. "
     "Only write_pipeline_file accepts SQL text. Follow the remaining budget and tested files in tool feedback. "
-    "Submit on a later turn after testing. If time or transform attempts are running out, "
+    "Work through all three output models and check the required metrics before submitting. Submit on a later turn after testing. "
+    "If time or transform attempts are running out, "
     'call submit_pipeline with {"mode":"partial"} to grade the current tested subset. '
     "The last turn and last tool call are reserved for submission."
 )

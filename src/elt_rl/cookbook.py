@@ -79,6 +79,14 @@ def submission_call_tokens(renderer: Renderer, mode: str) -> list[int]:
     return tokens
 
 
+def finalization_renderer(renderer: Renderer) -> Renderer:
+    from tinker_cookbook.renderers.qwen3_5 import Qwen3_5DisableThinkingRenderer, Qwen3_5Renderer
+
+    if isinstance(renderer, Qwen3_5Renderer) and not renderer.disables_thinking:
+        return Qwen3_5DisableThinkingRenderer(renderer.tokenizer)
+    return renderer
+
+
 class ELTMessageEnv(AgentToolMessageEnv):
     """Reuse the Cookbook's dispatcher while tracking the feedback turn explicitly."""
 
@@ -200,6 +208,7 @@ class BooksTokenEnv(ELTTokenEnv):
         self.books_messages = message_env
         self.episode = message_env._episode
         self.reserve = reserve
+        self.final_renderer = finalization_renderer(renderer)
         self.tokens_spent = 0
         self.turns_used = 0
 
@@ -240,8 +249,8 @@ class BooksTokenEnv(ELTTokenEnv):
         last_call = self.books_messages.remaining_tool_calls <= 1
         low_tokens = self.sampled_left <= self.reserve + 1
         working_left = self.sampled_left - self.reserve
-        recover_interrupted = (interrupted and not self.episode.tested_files and not (last_turn or last_call)
-                               and working_left >= 128)
+        recover_interrupted = (interrupted and not (last_turn or last_call)
+                               and working_left >= min(512, self.rollout_limits.max_turn_tokens))
         if recover_interrupted:
             self.episode.latest_error = "The previous action was incomplete. It was not executed. Use a shorter tool call."
             self.books_messages.turn = self.turns_used
@@ -267,8 +276,8 @@ class BooksTokenEnv(ELTTokenEnv):
                 result.metrics[f"stop/{reason}"] = 1
                 result.episode_done = self._finished = True
             return result
-        messages = self.books_messages.begin_finalization(self.renderer, self.turns_used, self.reserve)
-        observation = await self._render_in_thread(messages)
+        messages = self.books_messages.begin_finalization(self.final_renderer, self.turns_used, self.reserve)
+        observation = await asyncio.to_thread(self.final_renderer.build_generation_prompt, messages)
         if self.context_room(observation.length) < self.reserve:
             raise RuntimeError("submission prompt exceeds the configured context budget")
         self._finished = False

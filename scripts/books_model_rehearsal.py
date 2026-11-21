@@ -24,6 +24,7 @@ from elt_rl.settings import DEFAULT_RENDERER, ConfigurationError, read_settings
 
 
 HOSTED_BUDGET = TokenBudget(context=16_384, sampled=12_288)
+HOSTED_REASONING_BUDGET = TokenBudget(context=16_384, sampled=20_480, per_turn=4_096)
 HOSTED_TURNS = 32
 
 
@@ -58,7 +59,11 @@ class LocalBooksBackend(SnowflakeBooksBackend):
                 query, = transpile(statement, read="snowflake", write="duckdb")
                 self.connection.execute(query)
             except (SqlglotError, duckdb.Error) as error:
-                detail = f"{name}: local SQL error: {error}"
+                message = str(error)
+                if "must appear in the GROUP BY clause" in message:
+                    message = message.split("\nEither ", 1)[0]
+                    message += "\nUse a deterministic aggregate or compute the measure in a separate grouped CTE."
+                detail = f"{name}: local SQL error: {message}"
                 raise PartialTransformError(detail, tuple(tested)) from None
             tested.append(name)
 
@@ -201,13 +206,14 @@ async def run_hosted(args, task, bundle, assets, expected, evaluator_calls):
         temp.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
         temp.replace(args.out / "manifest.json")
 
-    config = EpisodeConfig(args.out / "work", max_turns=HOSTED_TURNS, max_tool_calls=32,
+    reasoning = args.renderer == "qwen3_5"
+    config = EpisodeConfig(args.out / "work", max_turns=HOSTED_TURNS, max_tool_calls=48 if reasoning else 32,
                            rollout_seconds=600, max_submissions=1)
     try:
         result = await run_remote(
-            "books-rehearsal", task, config, args.out, args.model, DEFAULT_RENDERER, 1, args.budget_usd, record,
+            "books-rehearsal", task, config, args.out, args.model, args.renderer, 1, args.budget_usd, record,
             api_key=settings["TINKER_API_KEY"], project_id=settings["TINKER_PROJECT_ID"] or None,
-            token_budget=HOSTED_BUDGET, preflight_only=args.preflight_only,
+            token_budget=HOSTED_REASONING_BUDGET if reasoning else HOSTED_BUDGET, preflight_only=args.preflight_only,
         )
         record(evaluator_queries=evaluator_calls)
         return result
@@ -241,7 +247,7 @@ async def run(args):
     task = books_task_definition(checkout, bundle, open_backend, verify)
     if args.hosted:
         return await run_hosted(args, task, bundle, assets, expected, evaluator_calls)
-    renderer = make_renderer(args.model, DEFAULT_RENDERER, offline=True)
+    renderer = make_renderer(args.model, args.renderer, offline=True)
     budget = TokenBudget()
     config = EpisodeConfig(args.out / "work", max_turns=24, max_tool_calls=32, max_submissions=1)
     builder = ELTGroupBuilder(config, renderer, 1, task_factory=lambda: task, budget=budget, evidence_dir=pipelines)
@@ -273,6 +279,7 @@ if __name__ == "__main__":
     parser.add_argument("--assets", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--model", default="Qwen/Qwen3.5-9B")
+    parser.add_argument("--renderer", choices=(DEFAULT_RENDERER, "qwen3_5"), default=DEFAULT_RENDERER)
     parser.add_argument("--local-model", default="qwen3.5:9b")
     parser.add_argument("--native-tools", action="store_true", help="Use Ollama tool rendering with the same dispatcher")
     parser.add_argument("--port", type=int, default=11435)

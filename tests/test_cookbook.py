@@ -402,6 +402,14 @@ def test_actual_qwen_renderer_tool_turns_offline(tmp_path):
 
     async def run():
         renderer = make_renderer(DEFAULT_MODEL, DEFAULT_RENDERER, offline=True)
+        from elt_rl.cookbook import finalization_renderer, submission_call_tokens
+
+        reasoning = make_renderer(DEFAULT_MODEL, "qwen3_5", offline=True)
+        closing = finalization_renderer(reasoning)
+        assert closing.disables_thinking and not reasoning.disables_thinking
+        action = submission_call_tokens(closing, "partial")
+        decoded, status = reasoning.parse_response(action)
+        assert status.is_clean and decoded["tool_calls"][0].function.name == "submit_pipeline"
         builder = ELTGroupBuilder(EpisodeConfig(tmp_path), renderer, 1,
                                   task_factory=lambda: replace(local_task(), partial_transforms=True))
         env, = await builder.make_envs()

@@ -19,7 +19,7 @@ from tinker_cookbook.rl.types import PARSE_ERROR_MASKED_METRIC_KEY, TrajectoryGr
 from tinker_cookbook.utils.cost_estimation import TokenCostRates, TokenUsage, fetch_model_pricing
 
 from .contracts import LORA_RANK, PILOT_BUDGET, EpisodeConfig, TaskDefinition, TokenBudget
-from .cookbook import BooksRollout, ELTDataset, ELTGroupBuilder, submission_call_tokens
+from .cookbook import BooksRollout, ELTDataset, ELTGroupBuilder, finalization_renderer, submission_call_tokens
 from .rendering import QWEN_TOKENIZER_REVISIONS, make_renderer
 from .settings import DEFAULT_RENDERER, ConfigurationError
 from .tinker_once import single_attempt_sdk
@@ -247,7 +247,8 @@ async def run_remote(
     if not math.isfinite(estimate) or estimate <= 0 or estimate > max_usd:
         raise ConfigurationError(f"estimated Tinker token cost exceeds the bound or is invalid ({estimate:.4f} USD)")
     record(model=model, renderer=renderer_name, task=task.task_id, seed=seed,
-           tokenizer_revision=QWEN_TOKENIZER_REVISIONS.get(model) if renderer_name == DEFAULT_RENDERER else None,
+           tokenizer_revision=(QWEN_TOKENIZER_REVISIONS.get(model)
+                               if renderer_name in {DEFAULT_RENDERER, "qwen3_5"} else None),
            cookbook_sha=COOKBOOK_SHA, tinker_version=version("tinker"),
            lora_rank=LORA_RANK if train else None, loss=LOSS if train else None,
            token_budget=asdict(budget), members=members, max_turns=config.max_turns,
@@ -257,7 +258,8 @@ async def run_remote(
     renderer = make_renderer(model, renderer_name, offline=True)
     reserve = 0
     if not train and task.partial_transforms:
-        sizes = {mode: len(submission_call_tokens(renderer, mode)) for mode in ("complete", "partial")}
+        closing_renderer = finalization_renderer(renderer)
+        sizes = {mode: len(submission_call_tokens(closing_renderer, mode)) for mode in ("complete", "partial")}
         reserve = 2 * max(sizes.values())
         if members != 1 or reserve > budget.per_turn or reserve + 1 >= budget.sampled:
             raise ConfigurationError("token budget cannot accommodate the serialized submission reserve")
