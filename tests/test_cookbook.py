@@ -13,7 +13,7 @@ import pytest
 pytest.importorskip("tinker_cookbook", reason="optional pinned Cookbook dependency")
 
 import tinker
-from tinker_cookbook.renderers.base import Message, ParseTermination, Renderer, ToolCall, ToolSpec
+from tinker_cookbook.renderers.base import Message, ParseTermination, RenderedMessage, Renderer, ToolCall, ToolSpec
 
 from elt_rl.contracts import EpisodeConfig, TokenBudget
 from elt_rl.cookbook import ELTGroupBuilder
@@ -46,6 +46,11 @@ class ScriptedRenderer:
             for index, item in enumerate(json.loads(bytes(action)))
         ]
         return {"role": "assistant", "content": "", "tool_calls": calls}, ParseTermination.STOP_SEQUENCE
+
+    def render_message(self, message, _context):
+        calls = [{"tool": call.function.name, "arguments": json.loads(call.function.arguments)}
+                 for call in message.get("tool_calls", [])]
+        return RenderedMessage(header=[], output=list(json.dumps(calls).encode()))
 
 
 def test_cookbook_token_env_group(tmp_path):
@@ -159,6 +164,73 @@ def test_books_text_only_turn_gets_one_tool_reminder(tmp_path):
             await builder.cleanup()
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("boundary,final", [
+    ("sampled", "submit"), ("sampled", "length"), ("turn", "submit"),
+    ("call", "submit"), ("unknown", "submit"), ("turn", "edit"), ("turn", "refuse"), ("turn", "bad_submit"),
+])
+def test_books_submission_reserve_keeps_one_explicit_action(tmp_path, boundary, final):
+    from tinker_cookbook.completers import TokensWithLogprobs
+    from tinker_cookbook.rl.rollouts import do_group_rollout
+    from elt_rl.cookbook import BooksRollout, submission_call_tokens
+
+    task = replace(local_task(), task_id="books", partial_transforms=True)
+    renderer = cast(Renderer, ScriptedRenderer())
+    reserve = 2 * max(len(submission_call_tokens(renderer, mode)) for mode in ("complete", "partial"))
+    actions = [json.loads(line) for line in TRACE.read_text(encoding="utf-8").splitlines()]
+    first_turn = actions[:3]
+    if boundary == "unknown":
+        first_turn.append({"tool": "unknown_tool", "arguments": {}})
+    start = [list(json.dumps(batch).encode()) for batch in (first_turn, [actions[3], actions[6], actions[7]])]
+    config = EpisodeConfig(tmp_path, max_turns=3 if boundary == "turn" else 5,
+                           max_tool_calls={"call": 7, "unknown": 8}.get(boundary, 16), max_submissions=1)
+    if boundary == "call":
+        start[-1] = start[-1][:-1] + list(b',' + json.dumps(actions[8]).encode() + b']')
+    # Leave exactly 24 working tokens after two tested files are available.
+    budget = TokenBudget(context=16_384, sampled=sum(map(len, start)) + reserve + 24)
+    builder = ELTGroupBuilder(config, renderer, 1, task_factory=lambda: task, budget=budget,
+                              submission_reserve=reserve)
+    work = list(json.dumps([actions[6]]).encode())
+    used = []
+
+    async def policy(prompt, _stop, *, max_tokens):
+        text = bytes(prompt.to_ints()).decode()
+        if len(used) < len(start):
+            response = start[len(used)]
+            if len(used) == 1:
+                assert "Sampled tokens left" in text
+        elif boundary == "sampled" and len(used) == len(start):
+            assert max_tokens == 24
+            response = work
+        else:
+            assert max_tokens == reserve
+            assert "Final turn. Current tested files: customer_totals.sql, order_totals.sql." in text
+            assert '"name": "write_pipeline_file"' not in text
+            cases = {
+                "submit": submission_call_tokens(renderer, "complete"),
+                "length": submission_call_tokens(renderer, "complete") + [32] * reserve,
+                "edit": work, "refuse": list(b"[]"),
+                "bad_submit": list(json.dumps([{"tool": "submit_pipeline", "arguments": {"mode": "bad"}}]).encode()),
+            }
+            response = cases[final]
+        used.append(max_tokens)
+        return TokensWithLogprobs(response[:max_tokens], None,
+                                  stop_reason="length" if len(response) > max_tokens else "stop")
+
+    group = asyncio.run(do_group_rollout(builder, policy, strategy=BooksRollout()))
+    trajectory, = group.trajectories_G
+    assert len(used) == (4 if boundary == "sampled" else 3)
+    assert sum(len(turn.ac.tokens) for turn in trajectory.transitions) <= budget.sampled
+    assert group.get_total_rewards() == [float(final == "submit")]
+    assert bool(trajectory.transitions[-1].metrics.get("submitted")) == (final == "submit")
+    if boundary == "sampled":
+        interrupted = trajectory.transitions[-2]
+        assert interrupted.metrics["work_action_truncated"] == 1
+        assert not interrupted.episode_done
+        assert not any(key.startswith("tool_call_") for key in interrupted.logs)
+    if boundary == "call":
+        assert trajectory.transitions[-2].logs["tool_calls_skipped_for_submission"] == 1
 
 
 def test_official_tool_trace_retains_feedback_even_without_submission(tmp_path):

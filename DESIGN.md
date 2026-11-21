@@ -19,7 +19,11 @@ replays just the current tested files. If a Snowflake batch fails after
 writing some outputs, the files it completed remain eligible. Each tool
 receipt shows the remaining turn, tool-call, and warehouse-attempt
 budgets. The last turn and last tool call are reserved for explicit
-submission. The official grader gives absent
+submission. Hosted books rollouts also reserve sampled tokens for one
+submission response and show the remaining sampled budget in feedback.
+At the work limit the final prompt lists the tested files and exposes
+only the submit tool. An interrupted work action does not reach the
+dispatcher. The official grader gives absent
 models zero Stage 2 credit. The run stores the candidate files and a
 separate submitted-file manifest.
 

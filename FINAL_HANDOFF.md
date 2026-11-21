@@ -55,6 +55,13 @@ rows, saved all three SQL files, and repaired and tested two. It hit the
 and the unsubmitted reward was 0. A new run requires separate approval.
 [Executed rehearsal and audit](evidence/books-hosted-rehearsal.md)
 
+The prepared follow-up holds back 54 of those 6,144 sampled tokens.
+Each canonical Qwen submission call takes 27 tokens. At the work limit
+the host shows the tested files and offers one submit-only turn.
+The archived trajectory was replayed and scored with a scripted final
+action. An actual model-chosen submission remains unverified.
+[Reserve implementation and offline evidence](evidence/books-submission-reserve.md)
+
 The same tools and tokenizer as the official run execute against DuckDB
 on the staged `books` data.
 The pinned evaluator scores the model's own submission through local
@@ -67,11 +74,13 @@ submission, and inspect both evaluator stages before launching Snowflake.
 $env:HF_HOME = (Resolve-Path runs/books-offline-model/hf).Path
 $env:HF_HUB_OFFLINE = '1'
 $env:TRANSFORMERS_OFFLINE = '1'
-.\.venv\Scripts\python.exe -c 'from pathlib import Path; import sys,runpy; sys.path.append(str(Path(sys.base_prefix)/""Lib""/""site-packages"")); sys.path.insert(0,""scripts""); sys.path.append("".venv-core/Lib/site-packages""); runpy.run_path(""scripts/books_model_rehearsal.py"",run_name=""__main__"")' --hosted --allow-paid --budget-usd 0.08 --checkout ../upstream-elt-bench --assets runs/books-assets --out runs/books-9b-rehearsal-live
+.\.venv\Scripts\python.exe -c 'from pathlib import Path; import sys,runpy; sys.path.append(str(Path(sys.base_prefix)/""Lib""/""site-packages"")); sys.path.insert(0,""scripts""); sys.path.append("".venv-core/Lib/site-packages""); runpy.run_path(""scripts/books_model_rehearsal.py"",run_name=""__main__"")' --hosted --allow-paid --budget-usd 0.08 --checkout ../upstream-elt-bench --assets runs/books-assets --out runs/books-9b-rehearsal-reserved-live
 ```
 
 The uncached estimate is **USD 0.078686208** for at most 20 turns,
-12,288 context tokens, and 6,144 sampled tokens. This uses no Snowflake
+12,288 context tokens, and 6,144 sampled tokens. The work phase can use
+at most 6,090 sampled tokens. Finalization uses the 54-token reserve
+once and stops after that response. This uses no Snowflake
 compute. Only the pinned public tokenizer is needed locally.
 Both launch commands accept `--preflight-only` in place of the paid
 flags. Use a fresh evidence directory for each command.

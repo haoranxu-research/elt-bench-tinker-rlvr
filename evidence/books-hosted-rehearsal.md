@@ -57,8 +57,9 @@ Private evidence under `runs/books-9b-rehearsal-live/` includes
 `decoded-actions.jsonl`, the three SQL files and manifest in
 `pipelines/`, the tool trace, the unsubmitted manifest, and
 `audit-result.json` with hashes and the billing snapshot. The executed
-[hosted command](../FINAL_HANDOFF.md#hosted-9b-rehearsal) used exactly
-one authorized run and returned exit code 2.
+[hosted command](../FINAL_HANDOFF.md#hosted-9b-rehearsal) at commit
+`7924dda` used output path `runs/books-9b-rehearsal-live` and returned
+exit code 2.
 
 ## Official rollout decision
 
@@ -70,3 +71,4 @@ how few sampled tokens remained. A sampled-token-aware submission
 warning and reserve would address the observed budget failure while
 keeping submission an explicit model action. The official rollout has
 no authorization from this run.
+[Implemented reserve and offline replay](books-submission-reserve.md)

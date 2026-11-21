@@ -19,7 +19,7 @@ from tinker_cookbook.rl.types import PARSE_ERROR_MASKED_METRIC_KEY, TrajectoryGr
 from tinker_cookbook.utils.cost_estimation import TokenCostRates, TokenUsage, fetch_model_pricing
 
 from .contracts import LORA_RANK, PILOT_BUDGET, EpisodeConfig, TaskDefinition, TokenBudget
-from .cookbook import ELTDataset, ELTGroupBuilder
+from .cookbook import BooksRollout, ELTDataset, ELTGroupBuilder, submission_call_tokens
 from .rendering import QWEN_TOKENIZER_REVISIONS, make_renderer
 from .settings import DEFAULT_RENDERER, ConfigurationError
 from .tinker_once import single_attempt_sdk
@@ -255,6 +255,13 @@ async def run_remote(
            token_prices=asdict(prices), estimated_upper_usd=estimate,
            spending_limit_usd=max_usd, actual_spend_usd=None, balance_pre=None, balance_post=None)
     renderer = make_renderer(model, renderer_name, offline=True)
+    reserve = 0
+    if not train and task.partial_transforms:
+        sizes = {mode: len(submission_call_tokens(renderer, mode)) for mode in ("complete", "partial")}
+        reserve = 2 * max(sizes.values())
+        if members != 1 or reserve > budget.per_turn or reserve + 1 >= budget.sampled:
+            raise ConfigurationError("token budget cannot accommodate the serialized submission reserve")
+        record(submission_call_tokens=sizes, submission_reserve=reserve, working_sampled_tokens=budget.sampled - reserve)
     rest = tinker.RestClient(api_key=api_key, base_url=DEFAULT_BASE_URL)
     capabilities = await rest.get_server_capabilities()
     supported = next((item for item in capabilities.supported_models if item.model_name == model), None)
@@ -289,10 +296,11 @@ async def run_remote(
                                         prompt_trace_file=None if train else out / "prompt-inputs.jsonl")
         dataset = ELTDataset(ELTGroupBuilder(
             config, renderer, members, task_factory=lambda: task, budget=budget, evidence_dir=out / "pipelines",
+            submission_reserve=reserve,
         ))
         builder, = dataset.get_batch(0)
         record(sampling="started")
-        group = await do_group_rollout(builder, policy)
+        group = await do_group_rollout(builder, policy, strategy=BooksRollout() if reserve else None)
         evidence = group_evidence(group)
         record(sampling="completed", rewards=group.get_total_rewards(), trajectories=evidence,
                sampled_actions_verified=True)
@@ -305,7 +313,7 @@ async def run_remote(
             if any((out / "official").glob("*/cleanup-required.txt")):
                 record(status="cleanup_required", submitted=submitted)
                 return 2
-            record(status="rollout_submitted" if submitted else "rollout_unsubmitted")
+            record(status="rollout_submitted" if submitted else "rollout_unsubmitted", submitted=submitted)
             return 0 if submitted else 2
         record(training_datum_count=len(datums), planned_training_input_tokens=usage.trained,
                **alignment_evidence(datums))

@@ -111,6 +111,12 @@ class ELTEpisodeState:
         self._submission_attempts = 0
         self._grade: Grade | None = None
         self.submitted_files: tuple[str, ...] = ()
+        self.finalizing = False
+        self.sampled_tokens_left: tuple[int, int] | None = None
+
+    @property
+    def tested_files(self) -> tuple[str, ...]:
+        return tuple(name for name in self.task.transform_artifacts if name in self._tested_files)
 
     def __enter__(self) -> "ELTEpisodeState":
         return self
@@ -141,6 +147,8 @@ class ELTEpisodeState:
             self._last_turn = turn
             if self._calls >= self.config.max_tool_calls:
                 return Feedback("ERROR: tool call limit reached")
+            if self.finalizing and name != "submit_pipeline":
+                return Feedback("ERROR: only submit_pipeline is available during finalization")
             self._calls += 1
             try:
                 if self.task.partial_transforms and name != "submit_pipeline" and (
@@ -160,8 +168,12 @@ class ELTEpisodeState:
         turns = self.config.max_turns - turn
         calls = self.config.max_tool_calls - self._calls
         attempts = getattr(self.backend, "remaining_transform_attempts", None)
-        tested = ", ".join(name for name in self.task.transform_artifacts if name in self._tested_files)
+        tested = ", ".join(self.tested_files)
         status = f"After this turn: {turns} turns left. Tool calls left: {calls}."
+        if self.sampled_tokens_left is not None:
+            remaining, reserve = self.sampled_tokens_left
+            status += (f" Sampled tokens left: {remaining} "
+                       f"({max(0, remaining - reserve)} for continued work, {reserve} reserved for submission).")
         if attempts is not None:
             status += f" Warehouse transform attempts left: {attempts}."
         status += f" Current tested files: {tested or 'none'}."
@@ -171,7 +183,7 @@ class ELTEpisodeState:
         return status
 
     def continuation_hint(self, turn: int) -> str | None:
-        if not self.task.partial_transforms or turn >= self.config.max_turns:
+        if self.finalizing or not self.task.partial_transforms or turn >= self.config.max_turns:
             return None
         if self._calls >= self.config.max_tool_calls or self._grade is not None:
             return None
