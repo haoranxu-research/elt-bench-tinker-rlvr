@@ -364,6 +364,27 @@ def test_public_review_flags_undefined_rate_defaults_but_preserves_zero_numerato
     assert not public_sql_review(independent_count, public_definitions)
 
 
+def test_public_review_flags_book_attributes_at_sale_line_grain():
+    combined = """
+        WITH author_books AS (
+            SELECT ba.author_id, b.publication_date, b.num_pages, ol.price
+            FROM book_author ba JOIN book b ON ba.book_id = b.book_id
+            LEFT JOIN order_line ol ON b.book_id = ol.book_id
+        )
+        SELECT author_id, SUM(num_pages), AVG(price) FROM author_books GROUP BY author_id
+    """
+    independent = """
+        WITH pages AS (SELECT book_id, num_pages FROM book),
+             sales AS (
+                 SELECT b.book_id, AVG(ol.price) FROM book b
+                 LEFT JOIN order_line ol ON b.book_id = ol.book_id GROUP BY b.book_id
+             )
+        SELECT pages.num_pages FROM pages JOIN sales ON pages.book_id = sales.book_id
+    """
+    assert "Several order lines can refer to one book" in public_sql_review(combined, "")[0]
+    assert not public_sql_review(independent, "")
+
+
 def test_local_books_date_format_translation_reports_the_file(monkeypatch):
     duckdb = pytest.importorskip("duckdb")
     pytest.importorskip("pandas")

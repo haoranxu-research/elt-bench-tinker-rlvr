@@ -84,6 +84,26 @@ def public_sql_review(sql: str, model_section: str) -> list[str]:
             feedback.append("COUNT(DISTINCT CASE ...) with constant results counts distinct branch values, "
                             "so it cannot count qualifying rows. Check what is being counted.")
             break
+    for select in query.find_all(exp.Select):
+        for join in select.args.get("joins", ()):
+            table = join.this
+            condition = join.args.get("on")
+            if not isinstance(table, exp.Table) or table.name.lower() != "order_line" or condition is None:
+                continue
+            order_alias = table.alias_or_name.lower()
+            joins_on_book = any(column.table.lower() == order_alias and column.name.lower() == "book_id"
+                                for column in condition.find_all(exp.Column))
+            selects_book_attributes = any(
+                column.name.lower() in {"num_pages", "publication_date"} and column.table.lower() != order_alias
+                for projection in select.expressions for column in projection.find_all(exp.Column)
+            )
+            if joins_on_book and selects_book_attributes:
+                feedback.append("This SELECT combines book attributes with order_line through order_line.book_id. "
+                                "Several order lines can refer to one book, repeating its date and page count. "
+                                "Check that book-level counts and page totals are computed before the sales join. "
+                                "For an average across all authors, check whether any authors were excluded "
+                                "before computing the average.")
+                return feedback
     return feedback
 
 

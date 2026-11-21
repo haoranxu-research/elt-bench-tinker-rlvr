@@ -94,7 +94,7 @@ BOOKS_INSTRUCTION = (
     "already tested SQL. Do not revise a saved draft again until you have tested it. You can call "
     "write_pipeline_file and then execute_pipeline for that file in the same turn. "
     "Review the public requirements and "
-    "check the required metrics before submitting. Submit on a later turn after testing. "
+    "check the required metrics and review any SQL feedback before submitting. Submit on a later turn after testing. "
     "If time or transform attempts are running out, "
     'call submit_pipeline with {"mode":"partial"} to grade the current tested subset. '
     "The last turn and last tool call are reserved for submission."

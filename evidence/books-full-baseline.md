@@ -253,3 +253,46 @@ using the real renderer and the local Terraform provider. Result was
 93 passed in 35.12 seconds. The revised recovery mode still needs hosted
 verification. The fresh read-only preflight in
 `stronger-persistent-preflight` passed at the same USD 0.23377920 upper bound.
+
+## Third authorized 35B rehearsal
+
+Run `runs/books-full-baseline/stronger-03` used revision `ad4cff6` and the
+same sampling flags, assets, and context cap as `stronger-02`. After one
+4,096-token interruption on turn 5, the model recovered without exhausting
+the working budget. It loaded all 15 source tables (84,337 rows), wrote and
+executed all three files, and submitted the complete set itself on turn 19.
+Stage 1 was 1.0. Stage 2 certified publishers and customers as exact matches.
+Five of the seven author columns matched. Stage 2 was 2/3, giving a reward
+of 0.7833333333333333.
+
+The author query derived publication counts and page totals from the same
+rows as sale prices. The source has 7,550 order lines for 5,466 distinct
+ordered books. Joining at this grain repeats book-level page counts and
+dates. The submitted year-rate column differed for 97 authors and the page
+classification differed for 836. The query also used only authors with books
+when averaging, though the public description specifies all authors. The
+offline SQL advisory now flags this join pattern and prompts a check of
+the population used in the average. Its inputs are the candidate SQL and
+public source relationships. It leaves the file eligible for submission and
+does not affect the evaluator or reward.
+
+A developer-only comparison deduplicated book-grain inputs and isolated the
+average population and the missing-author page totals one at a time. It
+eliminated all 97 year-rate differences and all 836 page-classification
+differences. That diagnostic is saved in
+`runs/books-full-baseline/stronger-03-grain-isolation.json` and was never
+part of a model prompt or submission. No additional hosted run tested the
+advisory.
+
+The audit matched all 19 responses to prompts, all 25 dispatched calls to
+samples, and all 24 eligible tool receipts to the next prompt. It matched
+the final files to model writes and verified that all requests fit within
+the context limit. Token use was 8,544 sampled, 77,696 cached input, and
+11,894 uncached input. Estimated cost is USD 0.02375118, with no posted
+billing rows at the time of the audit. No other paid session, training,
+or Snowflake compute ran.
+
+The revised SQL advisory passed the full test suite using
+`pytest -q --tb=short --basetemp .venv/books-join-grain-final` with the real
+renderer and the local Terraform provider enabled. Result was 94 passed
+in 34.47 seconds.
