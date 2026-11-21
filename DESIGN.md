@@ -108,11 +108,11 @@ The local warehouse path, real Qwen text renderer and Cookbook datum path
 have offline evidence. The pinned evaluator used a synthetic warehouse
 connector in tests. The production Tinker pilot completed one LoRA optimizer
 step using local SQLite rewards, measured a post-update log-probability
-change, and verified checkpoint metadata. The November 21 live `books`
+change, and verified checkpoint metadata. An earlier November 21 live `books`
 attempt observed all 15 expected source tables in Snowflake. The model
 used only whole-batch transforms, exhausted its transform attempts and
-finished unsubmitted with reward 0. Both live evaluator stages remain pending.
-[Pilot evidence](evidence/tinker-pilot.md) [Latest credentialed evidence](evidence/books-snowflake-final.md)
+finished unsubmitted with reward 0.
+[Pilot evidence](evidence/tinker-pilot.md) [Earlier credentialed evidence](evidence/books-snowflake-final.md)
 
 For `books`, candidate checks inspect source keys, shipping labels, defined
 rates, and whether a proposed title is dominated by another observed sale.
@@ -121,8 +121,9 @@ The pinned graders still compute the final score. The Qwen3.6-35B-A3B
 agent used the workflow to submit three exact outputs with both stages
 and reward at 1.0 on DuckDB. [Model-driven evidence](evidence/books-full-baseline.md)
 
-On native Snowflake, the 35B agent submitted its tested publisher and
-customer files after author SQL failed. Stage 1 passed all raw tables
-and Stage 2 matched one output. The grading worker finished after the
-trajectory deadline, so the persisted warehouse grade and trajectory
-reward differ. [Native grading evidence](evidence/books-snowflake-35b.md)
+The later Snowflake runs measured both stages on the agent's explicit partial
+submissions. The best run matched both submitted tables and returned the same
+0.783333 reward from the native grader and the trajectory. The stored native
+trajectory also produced aligned offline training datums using its actual
+sampled tokens and log probabilities. Full correctness on native Snowflake
+remains open. [Native evidence](evidence/books-snowflake-completion.md)

@@ -10,14 +10,12 @@ Snowflake `books` rollout and a one-step Tinker LoRA command.
 
 The hosted Qwen3.6-35B-A3B agent authored and submitted all three `books`
 transformations on DuckDB. The pinned evaluators returned Stage 1 = 1.0,
-Stage 2 = 1.0 and reward = 1.0. The separate credentialed Snowflake run
-graded a partial submission at Stage 1 = 1.0 and Stage 2 = 1/3.
-Its warehouse grade was 0.566667, and the former runner recorded 0.0 after
-timing out. A regression-tested replay and reward fix is ready for credentialed
-validation. Full native correctness remains open.
+Stage 2 = 1.0 and reward = 1.0. The best credentialed Snowflake run
+graded a partial submission at Stage 1 = 1.0 and Stage 2 = 2/3.
+Its warehouse grade and trajectory reward agreed at 0.783333. Full native
+correctness remains open.
 [Local scoring evidence](evidence/books-full-baseline.md)
-[Native grading and diagnosis](evidence/books-snowflake-35b.md)
-[Latest repair and launch gates](evidence/books-snowflake-deadlines.md)
+[Native grading and diagnosis](evidence/books-snowflake-completion.md)
 
 [Implementation design](DESIGN.md) · [Phase 1 evidence](evidence/phase1.txt) ·
 [Integration evidence](evidence/integrations.txt) · [Final handoff](FINAL_HANDOFF.md) · [Live Tinker pilot](evidence/tinker-pilot.md)
@@ -191,11 +189,11 @@ tool trace, submitted artifacts and per-attempt sync provenance. A cleanup failu
 in `private-recovery`. Keep the entire run directory private and review cleanup
 notices before using the result.
 
-The November 21 live `books` attempt loaded all 15 streams and 84,337 rows
+An earlier November 21 live `books` attempt loaded all 15 streams and 84,337 rows
 through Airbyte into Snowflake. The model repaired the publisher SQL, then
 hit an author SQL error and the transformation attempt limit. It ended
 unsubmitted after 24 turns with reward 0. Neither official grading stage
-ran against the live warehouse. [Latest credentialed evidence](evidence/books-snowflake-final.md)
+ran in that attempt. [Earlier unsubmitted run](evidence/books-snowflake-final.md)
 
 The validator now reports the first actionable error in each invalid SQL file
 in the same tool observation. The saved 24-turn trajectory confirms delivery

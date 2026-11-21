@@ -6,12 +6,13 @@
 | --- | --- | --- |
 | Credential-free, multi-turn ELT | The SQLite trace repaired a failed transform, submitted from a later turn, and earned 1.0 on a fresh replay. The test suite covers faulty input, failed transforms, partial and unsubmitted scores, and cleanup. | Complete |
 | Hosted agent submission with pinned books grading | Qwen3.6-35B-A3B independently wrote, executed, and submitted all three outputs on DuckDB. All 15 tables and 84,337 rows were present. Stage 1 = 1.0, Stage 2 = 1.0, reward = 1.0. | Local target complete |
-| Credentialed official task | Qwen3.6-35B-A3B loaded all 84,337 rows and made a partial submission. Native graders returned Stage 1 = 1.0, Stage 2 = 1/3, warehouse reward = 0.566667. The trajectory timed out and recorded reward 0. The reward repair passed offline regressions. | Full correctness and native reward delivery pending. |
+| Credentialed official task | Qwen3.6-35B-A3B loaded all 84,337 rows and submitted two tested models. The best native result was Stage 1 = 1.0, Stage 2 = 2/3. The native grader and trajectory both returned 0.783333. An offline audit used the recorded return and sampled actions to verify training datums. | Full native correctness pending. |
 | Real Tinker RL update | A previous pilot completed one optimizer step from execution-derived SQLite rewards and verified a changed probe and matching checkpoint metadata. | Complete |
 | Submission materials | The repository records the current results and reproduction commands. | Final baseline handoff pending |
 
 [Earlier credentialed rollout](evidence/books-snowflake-final.md) ·
 [35B native grading and diagnosis](evidence/books-snowflake-35b.md) ·
+[Latest authorized Snowflake rollouts](evidence/books-snowflake-completion.md) ·
 [Hosted model correctness and diagnostics](evidence/books-full-baseline.md) ·
 [Hosted submission and official preflight](evidence/books-context-completion.md) ·
 [Tinker optimizer evidence](evidence/tinker-pilot.md) ·
@@ -76,9 +77,9 @@ tokens, and 8,192 sampled tokens. Measured usage implies **USD
 
 ## Final live command
 
-The command below is prepared for the next 35B Snowflake launch. The prior
-authorization was used for the archived run. This launch requires fresh
-authorization and enough verified headroom on the dedicated trial monitor.
+The commands below reproduce the two authorized 35B Snowflake rollouts.
+Use a fresh output directory and obtain separate authorization before
+launching any additional official run.
 
 The authoritative model entry point is `elt_rl.run official-rollout`.
 The candidate is `Qwen/Qwen3.6-35B-A3B` with its pinned no-thinking
@@ -110,20 +111,16 @@ $env:HF_HOME = (Resolve-Path runs/books-offline-model/hf).Path
 $env:HF_HUB_OFFLINE = '1'
 $env:TRANSFORMERS_OFFLINE = '1'
 ./.venv/Scripts/python.exe -c 'from pathlib import Path; import sys; sys.path.append(str(Path(sys.base_prefix)/""Lib""/""site-packages"")); from elt_rl.run import main; raise SystemExit(main())' official-rollout --books-35b-profile --allow-paid --allow-warehouse --rollout-seconds 2400 --grading-seconds 1500 --budget-usd 0.20 --model Qwen/Qwen3.6-35B-A3B --renderer qwen3_5_disable_thinking --out runs/books-official-qwen35b-002 2>&1 | ForEach-Object ToString | Tee-Object runs/books-official-qwen35b-002-console.txt
+./.venv/Scripts/python.exe -c 'from pathlib import Path; import sys; sys.path.append(str(Path(sys.base_prefix)/""Lib""/""site-packages"")); from elt_rl.run import main; raise SystemExit(main())' official-rollout --books-35b-profile --books-max-turns 40 --allow-paid --allow-warehouse --rollout-seconds 2400 --grading-seconds 1500 --budget-usd 0.25 --model Qwen/Qwen3.6-35B-A3B --renderer qwen3_5_disable_thinking --out runs/books-official-qwen35b-003 2>&1 | ForEach-Object ToString | Tee-Object runs/books-official-qwen35b-003-console.txt
 ```
 
 The runner checks current rates before creating a Tinker session. The
-uncached token bound for this Qwen3.6-35B profile is **USD 0.19335168**.
-The prior native grading run recorded USD 0.03342849 at published token
-rates and a rounded monitor increase of 0.73 credits immediately after
-cleanup. Plan for 0.75–1.10 warehouse credits and verify at least 1.30
-credits of headroom to immediate suspension before launching. The 65-minute
-combined work budgets would use 1.083 credits with continuous X-Small
-Gen1 compute, before cleanup and cloud-services metering. The refreshed
-administrator view showed 1.46 credits used and an immediate suspension
-threshold of 1.50, leaving approximately 0.04 credits. The existing
-monitor has no reset schedule. The next run needs fresh authorization
-and a verified bounded allowance. [Monitor setup and allowance checks](evidence/books-snowflake-deadlines.md#next-run-gates)
+uncached token bounds were **USD 0.19335168** and **USD 0.23758848**.
+The retry raised the turn and tool-call caps to 40 and 60 while keeping
+the model, token count limits, and wall-clock deadlines. The dedicated
+monitor had a 3-credit quota and an immediate suspension trigger at 2.70
+credits, with no reset schedule. The host checked the remaining allowance
+before the retry. [Run and spending evidence](evidence/books-snowflake-completion.md)
 [Tinker rate card](https://tinker-docs.thinkingmachines.ai/tinker/models.json) ·
 [Snowflake warehouse billing](https://docs.snowflake.com/en/user-guide/warehouses-overview#impact-on-credit-usage-and-billing)
 

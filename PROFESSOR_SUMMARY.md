@@ -45,10 +45,12 @@ returned Stage 1 = 1.0, Stage 2 = 1.0, and reward = 1.0. A subsequent
 credentialed Snowflake run submitted two files. The native evaluators
 recorded Stage 1 = 1.0, Stage 2 = 1/3, and warehouse reward = 0.566667.
 The trajectory timed out during the grading replay and recorded reward 0.
-Offline regression tests now verify that the completed grade is attached to
-the original sampled submission action and contributes to the correct training
-advantage. Full Snowflake correctness and native reward delivery remain unverified.
-[Native grading evidence](evidence/books-snowflake-35b.md)
+The repaired runner completed native grading with Stage 1 = 1.0 and a best
+Stage 2 of 2/3. The native grade and trajectory reward agreed at 0.783333,
+and an offline training-data audit verified propagation of that real return
+with the original sampled tokens and log probabilities. The author output
+still needs a successful Snowflake submission.
+[Native grading evidence](evidence/books-snowflake-completion.md)
 [Timeout fix and dialect diagnostics](evidence/books-snowflake-deadlines.md)
 [Hosted submission evidence](evidence/books-full-baseline.md)
 [Design](DESIGN.md) [Latest credentialed evidence](evidence/books-snowflake-final.md)

@@ -354,3 +354,12 @@ zero and the required rates were undefined. Offline controls isolated both
 causes. The controls stayed on the developer side.
 [Native evidence](evidence/books-snowflake-35b.md)
 [Reproduction and repair](evidence/books-snowflake-deadlines.md)
+
+Two subsequent credentialed attempts returned their actual native grades to
+the original sampled trajectories. The better run matched publishers and
+customers. The retry reached the authors transform and failed with SQLSTATE
+`42601`. Its saved draft reproduced a grouping error offline at the same
+qualified identifier. The retry also retained two zero defaults after the
+customer public check flagged them. Neither native attempt submitted a tested
+author model. The tracked controls and the final unresolved issues are in the
+[completion evidence](evidence/books-snowflake-completion.md#retry-diagnosis).
