@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | Credential-free, multi-turn ELT | The SQLite trace repaired a failed transform, submitted from a later turn, and earned 1.0 on a fresh replay. The test suite covers faulty input, failed transforms, partial and unsubmitted scores, and cleanup. | Complete |
 | Hosted agent submission with pinned books grading | Qwen3.6-35B-A3B independently wrote, executed, and submitted all three outputs on DuckDB. All 15 tables and 84,337 rows were present. Stage 1 = 1.0, Stage 2 = 1.0, reward = 1.0. | Local target complete |
-| Credentialed official task | Qwen3.6-35B-A3B loaded all 84,337 rows and made a partial submission. Native graders returned Stage 1 = 1.0, Stage 2 = 1/3, warehouse reward = 0.566667. The trajectory timed out and recorded reward 0. | Native two-stage grading verified. Full correctness pending. |
+| Credentialed official task | Qwen3.6-35B-A3B loaded all 84,337 rows and made a partial submission. Native graders returned Stage 1 = 1.0, Stage 2 = 1/3, warehouse reward = 0.566667. The trajectory timed out and recorded reward 0. The reward repair passed offline regressions. | Full correctness and native reward delivery pending. |
 | Real Tinker RL update | A previous pilot completed one optimizer step from execution-derived SQLite rewards and verified a changed probe and matching checkpoint metadata. | Complete |
 | Submission materials | The repository records the current results and reproduction commands. | Final baseline handoff pending |
 
@@ -22,7 +22,7 @@
 The fresh probe matched 84,337 rows across all 15 pinned tables in local
 PostgreSQL. All six Airbyte jobs succeeded on their first attempt and
 the probe cleaned up its resources.
-[Latest preflight and model evidence](evidence/books-model-readiness.md)
+[Latest preflight and reward regression evidence](evidence/books-snowflake-deadlines.md)
 
 The host persists model-authored SQL, returns file-level validation and
 warehouse errors, and allows an individual saved file to be tested.
@@ -39,7 +39,7 @@ model outputs. With one model absent, Stage 2 awarded two of three and the
 environment formula returned 0.7833333. With an incorrect raw count, Stage 2
 skipped all model queries. [Commands and evidence](evidence/books-final-audit.md)
 
-## November 21 authorization and checks
+## Earlier November 21 authorization and checks
 
 - The fresh local Airbyte preflight passed on all six connections. It
   matched all 15 pinned tables and 84,337 rows, with cleanup verified.
@@ -76,24 +76,25 @@ tokens, and 8,192 sampled tokens. Measured usage implies **USD
 
 ## Final live command
 
-The command below is the record of the single authorized 35B Snowflake
-launch. That run has finished. A new run requires fresh authorization
-and a new estimate of warehouse allowance and wall time.
+The command below is prepared for the next 35B Snowflake launch. The prior
+authorization was used for the archived run. This launch requires fresh
+authorization and enough verified headroom on the dedicated trial monitor.
 
 The authoritative model entry point is `elt_rl.run official-rollout`.
 The candidate is `Qwen/Qwen3.6-35B-A3B` with its pinned no-thinking
 renderer. The runner records prompt and action token IDs in an ignored
 run directory. It permits one agent, 32 turns, 48 tool calls, ten
-transform attempts, one grading replay and a 40-minute rollout timeout.
+transform attempts, and one fresh grading replay. The prepared command
+uses 40 minutes for agent actions and up to 25 minutes for host grading,
+then bounded cleanup. An accepted submission retains its sampled action
+and receives its completed grade before the reward reaches the caller.
 The Tinker profile uses 12,288 context tokens, 12,288 total sampled tokens,
-and at most 2,048 sampled tokens per turn. Snowflake authentication,
-warehouse visibility, grants, and monitor attachment passed read-only
-checks.
-[Official setup](LIVE_SETUP.md#official-snowflake-books)
+and at most 2,048 sampled tokens per turn.
+[Deadline repair and readiness evidence](evidence/books-snowflake-deadlines.md)
 
-The refreshed Airbyte probe completed six local syncs and matched all
-15 counts, totaling 84,337 rows. Probe cleanup completed. The worker
-has one sync attempt per job. [Preflight evidence](evidence/books-full-baseline.md#full-score-hosted-submission)
+The refreshed Airbyte probe completed six local syncs (jobs 91–96) and
+matched all 15 counts, totaling 84,337 rows. Probe cleanup completed. The
+worker has one sync attempt per job. [Preflight evidence](evidence/books-snowflake-deadlines.md#next-run-gates)
 
 ```powershell
 $private = Join-Path $env:LOCALAPPDATA 'ELTBenchBooks'
@@ -108,22 +109,21 @@ $env:CHECKPOINT_DISABLE = '1'
 $env:HF_HOME = (Resolve-Path runs/books-offline-model/hf).Path
 $env:HF_HUB_OFFLINE = '1'
 $env:TRANSFORMERS_OFFLINE = '1'
-./.venv/Scripts/python.exe -c 'from pathlib import Path; import sys; sys.path.append(str(Path(sys.base_prefix)/""Lib""/""site-packages"")); from elt_rl.run import main; raise SystemExit(main())' official-rollout --books-35b-profile --allow-paid --allow-warehouse --rollout-seconds 2400 --budget-usd 0.20 --model Qwen/Qwen3.6-35B-A3B --renderer qwen3_5_disable_thinking --out runs/books-official-qwen35b-001 2>&1 | ForEach-Object ToString | Tee-Object runs/books-official-qwen35b-001-console.txt
+./.venv/Scripts/python.exe -c 'from pathlib import Path; import sys; sys.path.append(str(Path(sys.base_prefix)/""Lib""/""site-packages"")); from elt_rl.run import main; raise SystemExit(main())' official-rollout --books-35b-profile --allow-paid --allow-warehouse --rollout-seconds 2400 --grading-seconds 1500 --budget-usd 0.20 --model Qwen/Qwen3.6-35B-A3B --renderer qwen3_5_disable_thinking --out runs/books-official-qwen35b-002 2>&1 | ForEach-Object ToString | Tee-Object runs/books-official-qwen35b-002-console.txt
 ```
 
 The runner checks current rates before creating a Tinker session. The
 uncached token bound for this Qwen3.6-35B profile is **USD 0.19335168**.
-The full-score local run used an estimated USD 0.03314277. Previous
-Snowflake runs used approximately 0.25–0.32
-credits to load and execute without grading. Two comparable passes give
-**0.50–0.64 credits** as a planning range before headroom for grading and
-cleanup. A continuously active standard Gen1 X-Small warehouse uses
-1 credit in 60 minutes. The refreshed administrator console confirmed
-attachment and approximately 0.78 credits until immediate suspension.
-Forty minutes of continuous Gen1 X-Small compute is 0.667 credits.
-The monitor remains the backstop for in-flight work, resume minimums,
-other metered usage, and cleanup.
-[Latest checks and commands](evidence/books-context-completion.md#official-rollout-readiness)
+The prior native grading run recorded USD 0.03342849 at published token
+rates and a rounded monitor increase of 0.73 credits immediately after
+cleanup. Plan for 0.75–1.10 warehouse credits and verify at least 1.30
+credits of headroom to immediate suspension before launching. The 65-minute
+combined work budgets would use 1.083 credits with continuous X-Small
+Gen1 compute, before cleanup and cloud-services metering. The refreshed
+administrator view showed 1.46 credits used and an immediate suspension
+threshold of 1.50, leaving approximately 0.04 credits. The existing
+monitor has no reset schedule. The next run needs fresh authorization
+and a verified bounded allowance. [Monitor setup and allowance checks](evidence/books-snowflake-deadlines.md#next-run-gates)
 [Tinker rate card](https://tinker-docs.thinkingmachines.ai/tinker/models.json) ·
 [Snowflake warehouse billing](https://docs.snowflake.com/en/user-guide/warehouses-overview#impact-on-credit-usage-and-billing)
 
@@ -134,7 +134,7 @@ Record billed usage from the provider and distinguish it from token-rate
 estimates and rounded monitor deltas. Report the actual reward and whether
 each stage executed. A missing submit continues to earn zero by design.
 
-The November 21 run exited unsubmitted with reward 0. Its recorded token
+An earlier November 21 run exited unsubmitted with reward 0. Its recorded token
 usage implies USD 0.020613408 at public rates. The monitor displayed an
 approximately 0.25-credit increase. Audit checks confirmed a suspended
 warehouse and zero remaining run-owned databases or Airbyte resources.

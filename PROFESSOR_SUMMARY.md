@@ -37,8 +37,7 @@ identifies SQL errors by file, and supports explicit partial submission
 of tested artifacts. The follow-up preserves completed files across
 batch failures and shows which files can be submitted before the budget
 expires. The pinned grader and reward weights are unchanged. The
-November 21 run's database and Airbyte resources were removed. A graded
-model submission on Snowflake remains pending.
+earlier November 21 run's database and Airbyte resources were removed.
 The hosted Qwen3.6-35B-A3B agent loaded the 15 pinned `books` tables
 (84,337 rows) into DuckDB. It independently wrote, executed, repaired,
 and submitted all three SQL transformations. The pinned evaluators
@@ -46,7 +45,11 @@ returned Stage 1 = 1.0, Stage 2 = 1.0, and reward = 1.0. A subsequent
 credentialed Snowflake run submitted two files. The native evaluators
 recorded Stage 1 = 1.0, Stage 2 = 1/3, and warehouse reward = 0.566667.
 The trajectory timed out during the grading replay and recorded reward 0.
+Offline regression tests now verify that the completed grade is attached to
+the original sampled submission action and contributes to the correct training
+advantage. Full Snowflake correctness and native reward delivery remain unverified.
 [Native grading evidence](evidence/books-snowflake-35b.md)
+[Timeout fix and dialect diagnostics](evidence/books-snowflake-deadlines.md)
 [Hosted submission evidence](evidence/books-full-baseline.md)
 [Design](DESIGN.md) [Latest credentialed evidence](evidence/books-snowflake-final.md)
 [Model and protocol evidence](evidence/books-model-readiness.md)

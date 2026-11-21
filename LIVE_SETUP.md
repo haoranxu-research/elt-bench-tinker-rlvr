@@ -477,11 +477,15 @@ observations to `pipelines/*.tools.jsonl`, and per-attempt Airbyte jobs and
 grader files to `official/<run-database>/`.
 
 Warm the exact connector versions reported by the local Airbyte catalog in
-the kind node before starting the rollout. The adapter allows 600 seconds
-per Airbyte sync, Terraform operation and evaluator process. This accounts
-for the queue delay observed in the verified local sync. The rollout uses a
-60-minute Cookbook timeout to allow for the six-connection load and the
-submission replay. In-flight service operations retain their own timeouts.
+the kind node before starting the rollout. The adapter allows up to 600
+seconds per Airbyte sync, Terraform operation and evaluator process. By
+default the official entry point shares one wall-clock budget between
+agent actions and grading. For the prepared run, `--rollout-seconds 2400
+--grading-seconds 1500` reserves 40 minutes for the agent and a separate
+25-minute host budget after explicit submission. The grader and replay
+bound their operations by the remaining grading time. Cleanup still runs
+with the service-level timeouts. Use the default shared deadline if an
+external protocol imposes a single overall time limit.
 
 Run the local source preflight immediately before requesting execution. It
 compares the published custom connector manifest to the pinned checkout,
@@ -525,7 +529,8 @@ and cache the public tokenizer on S before launch. The account's
 read-only capabilities response confirms base-model sampling availability.
 The local DuckDB rehearsal reached full correctness with this model and
 renderer. The prepared official command matches its turn, token, and
-transform budgets with a 40-minute live timeout.
+transform budgets with a 40-minute agent deadline and separate bounded
+host grading. [Latest readiness](evidence/books-snowflake-deadlines.md)
 [Full-score evidence and live preparation](evidence/books-full-baseline.md)
 
 The second November 20 credentialed attempt loaded all 15 streams into

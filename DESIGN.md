@@ -51,6 +51,16 @@ a second fresh namespace and replays the artifacts before reading its
 warehouse state. Cleanup is bounded and ambiguous Snowflake resource
 creation is reported for operator review.
 
+The official runner accepts an explicit submission by saving an immutable
+snapshot of its load manifest and tested SQL while the agent deadline is
+still open. The agent terminates at acceptance. The host grades that snapshot
+after the sampled transition is recorded, then attaches the result to that
+same transition before the Cookbook computes trajectory returns. The default
+uses the original shared deadline. An explicit `--grading-seconds` permits a
+separately bounded host phase when the protocol allows it. Failed or expired
+grading returns zero with a distinct status. Cleanup attempts both Airbyte
+and database removal and records failures separately from the grade.
+
 Stage 1 is the fraction of required raw tables with the correct row count.
 Only complete Stage 1 success permits Stage 2, which measures matching
 transformed models. The terminal training reward weights the stage fractions

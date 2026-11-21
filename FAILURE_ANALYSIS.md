@@ -335,3 +335,22 @@ replays the real host logic with an offline backend for the prior successful
 load. Neither generates new model actions, checks Snowflake SQL execution,
 nor runs official evaluators. This investigation made no paid calls and
 changed no implementation.
+
+## Subsequent Snowflake-native grading
+
+The later Qwen3.6-35B-A3B agent explicitly submitted two tested files. Its
+fresh grading replay produced Stage 1 = 1.0, Stage 2 = 1/3 and a warehouse
+reward of 0.566667 after the former whole-rollout timer had already made the
+trajectory terminal with reward 0.0. The repaired runner preserves the
+original sampled submission transition and reconciles its completed grade
+before computing returns. Regression tests cover the shared deadline and the
+explicit separate grading budget.
+
+Airbyte delivered `book.publication_date` as `TEXT`. The saved author draft
+and the archived full-score DuckDB submission both fail date extraction
+when that column is loaded as text. The two submitted customer rates each
+disagree on the same 303 no-order customers, where the submitted rates were
+zero and the required rates were undefined. Offline controls isolated both
+causes. The controls stayed on the developer side.
+[Native evidence](evidence/books-snowflake-35b.md)
+[Reproduction and repair](evidence/books-snowflake-deadlines.md)
