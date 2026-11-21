@@ -218,7 +218,7 @@ async def run_hosted(args, task, bundle, assets, expected, evaluator_calls):
     budget = HOSTED_REASONING_BUDGET if reasoning else HOSTED_BUDGET
     if args.context_cap is not None:
         budget = replace(budget, context=args.context_cap)
-    config = EpisodeConfig(args.out / "work", max_turns=HOSTED_TURNS, max_tool_calls=48 if reasoning else 32,
+    config = EpisodeConfig(args.out / "work", max_turns=args.turn_cap, max_tool_calls=48 if reasoning else 32,
                            rollout_seconds=600, max_submissions=1)
     try:
         result = await run_remote(
@@ -300,6 +300,8 @@ if __name__ == "__main__":
     parser.add_argument("--budget-usd", type=float, default=0.17)
     parser.add_argument("--context-cap", type=int,
                         metavar="8192..16384", help="Optional lower hosted context cap for cost control")
+    parser.add_argument("--turn-cap", type=int, choices=range(20, HOSTED_TURNS + 1), default=HOSTED_TURNS,
+                        metavar="20..32", help="Optional lower hosted turn cap for cost control")
     parser.add_argument("--env-file", type=Path, default=Path(".env"))
     args = parser.parse_args()
     if args.hosted:
@@ -309,7 +311,7 @@ if __name__ == "__main__":
             parser.error("--budget-usd must be finite and positive")
         if args.context_cap is not None and not 8192 <= args.context_cap <= 16_384:
             parser.error("--context-cap must be between 8192 and 16384")
-    elif args.preflight_only or args.allow_paid or args.context_cap is not None:
+    elif args.preflight_only or args.allow_paid or args.context_cap is not None or args.turn_cap != HOSTED_TURNS:
         parser.error("hosted flags require --hosted")
     try:
         raise SystemExit(asyncio.run(run(args)))

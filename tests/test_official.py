@@ -385,6 +385,20 @@ def test_public_review_flags_book_attributes_at_sale_line_grain():
     assert not public_sql_review(independent, "")
 
 
+def test_public_review_reminds_author_average_population_without_sale_join():
+    sql = """
+        WITH per_author AS (
+            SELECT ba.author_id, SUM(b.num_pages) AS total_pages
+            FROM book_author ba JOIN book b ON ba.book_id = b.book_id
+            GROUP BY ba.author_id
+        )
+        SELECT AVG(total_pages) FROM per_author
+    """
+    requirement = "below_average: Flag if the author wrote fewer pages than the average total pages of all authors."
+    assert "includes authors with no related book rows" in public_sql_review(sql, requirement)[0]
+    assert not public_sql_review(sql, "average_pages: Average over authors with books.")
+
+
 def test_local_books_date_format_translation_reports_the_file(monkeypatch):
     duckdb = pytest.importorskip("duckdb")
     pytest.importorskip("pandas")

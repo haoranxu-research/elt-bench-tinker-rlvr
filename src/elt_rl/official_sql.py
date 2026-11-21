@@ -71,6 +71,13 @@ def public_sql_review(sql: str, model_section: str) -> list[str]:
     if rounded:
         feedback.append(f"Review the rounding of {', '.join(rounded)}. The public requirements "
                         "do not request rounding for these percentages.")
+    if "average total pages of all authors" in model_section.lower() and any(
+        "pages" in column.name.lower() for average in query.find_all(exp.Avg)
+        for column in average.find_all(exp.Column)
+    ):
+        feedback.append("The public page average covers all authors. Verify that its input includes authors "
+                        "with no related book rows and that their page totals contribute zero to the average "
+                        "and to the comparison.")
     for count in query.find_all(exp.Count):
         value = count.this
         if not isinstance(value, exp.Distinct) or len(value.expressions) != 1:
@@ -100,9 +107,7 @@ def public_sql_review(sql: str, model_section: str) -> list[str]:
             if joins_on_book and selects_book_attributes:
                 feedback.append("This SELECT combines book attributes with order_line through order_line.book_id. "
                                 "Several order lines can refer to one book, repeating its date and page count. "
-                                "Check that book-level counts and page totals are computed before the sales join. "
-                                "For an average across all authors, check whether any authors were excluded "
-                                "before computing the average.")
+                                "Check that book-level counts and page totals are computed before the sales join.")
                 return feedback
     return feedback
 

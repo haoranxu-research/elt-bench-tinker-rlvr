@@ -87,6 +87,7 @@ BOOKS_INSTRUCTION = (
     "own grain before joining, and use a ROW_NUMBER CTE for a ranked row rather than correlated ORDER BY/LIMIT. "
     "Check that a join to a finer grain has not duplicated the records counted or summed. A group rank needs PARTITION BY. "
     "Use explicit NULL ordering for ranked rows when needed and examine whether an inner join drops entities without related rows. "
+    "When a comparison uses an average across all entities, include those without related rows in the population. "
     "For each model, use write_pipeline_file(path, content) to save the full SQL query, then test just "
     "that file with execute_pipeline(stage=transform, file=filename). Rewrite the named file when it fails. "
     "Only write_pipeline_file accepts SQL text. Follow the remaining budget and tested files in tool feedback. "
