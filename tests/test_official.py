@@ -1143,7 +1143,13 @@ def test_official_episode_calls_two_isolated_warehouse_replays(checkout, tmp_pat
 
         assert "Official ELT-Bench" in call("read_task", 1).text
         assert "author(" in call("read_task_section", 2, section="mongodb").text
-        call("write_pipeline_file", 3, path="load.json", content='{"sources":{"mongodb":["author"]}}')
+        sources = {group: list(names) for group, names in task.load_streams.items()}
+        complete = call("write_pipeline_file", 3, path="load.json", content=json.dumps({"sources": sources})).text
+        assert "Next: execute_pipeline with stage=load" in complete
+        del sources["flat_files"]
+        partial = call("write_pipeline_file", 3, path="load.json", content=json.dumps({"sources": sources})).text
+        assert "Stage 2 requires all source streams" in partial
+        assert "Missing: flat_files.address_status, flat_files.order_status." in partial
         loaded = call("execute_pipeline", 4, stage="load").text
         assert "author=7" in loaded and "author(author_id, author_name)" in loaded
         assert "book(publication_date TEXT)" in loaded

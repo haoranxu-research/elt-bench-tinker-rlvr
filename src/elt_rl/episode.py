@@ -83,6 +83,7 @@ INITIAL_INSTRUCTION = (
 BOOKS_INSTRUCTION = (
     "Use tools to complete the ELT task. Start with read_task. Save load.json with write_pipeline_file, "
     "wait for a successful save receipt, then execute_pipeline with stage=load. "
+    "Keep every listed source stream in the manifest. Dropping a stream after a connection error blocks Stage 2. "
     "Use bare filenames. Inspect actual warehouse columns and read the relevant model and relationship sections before writing SQL. "
     "Start with one short independent transformation and get it tested. Check each join key against the schema "
     "and qualify any column shared by several joined inputs. "
@@ -476,13 +477,16 @@ class ELTEpisodeState:
             raise PipelineError("artifact must be valid UTF-8") from None
         if len(encoded) > self.config.max_artifact_bytes:
             raise PipelineError("artifact exceeds size limit")
+        missing_streams = []
         if path == "load.json" and self.task.load_streams:
             from .airbyte import select_streams
 
             try:
-                select_streams(content, self.task.load_streams)
+                selected = select_streams(content, self.task.load_streams)
             except PipelineError as error:
                 raise PipelineError(f"{error} load.json was not changed.") from None
+            missing_streams = [f"{group}.{stream}" for group, streams in self.task.load_streams.items()
+                               for stream in streams if stream not in selected.get(group, ())]
         target = self.artifact_dir / path
         if self.task.partial_transforms and target.is_file():
             current = target.read_bytes()
@@ -506,6 +510,9 @@ class ELTEpisodeState:
             self.source_labels = ""
         if not self.task.partial_transforms:
             return f"saved {path}"
+        if missing_streams:
+            return (f"saved {path} ({len(encoded)} bytes). Stage 2 requires all source streams. "
+                    f"Missing: {', '.join(missing_streams)}. Add them to load.json before executing load.")
         stage = "load" if path in self.task.load_artifacts else "transform"
         target_args = f" and file={path}" if stage == "transform" else ""
         previous = (" The previous SQL draft is available with read_pipeline_file version=previous."
