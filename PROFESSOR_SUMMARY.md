@@ -56,3 +56,11 @@ still needs a successful Snowflake submission.
 [Design](DESIGN.md) [Latest credentialed evidence](evidence/books-snowflake-final.md)
 [Model and protocol evidence](evidence/books-model-readiness.md)
 [Final reproducibility and acceptance status](FINAL_HANDOFF.md)
+
+The later native attempt 004 started from the full-score TEXT-date
+rehearsal configuration and sampled a fresh trajectory. A Google Drive
+connector TLS failure led the agent to omit two raw streams. The native
+grader matched 13 of 15 tables, skipped Stage 2, and returned 0.303333.
+The same reward reached the sampled trajectory and offline training
+interface. The native full-score milestone remains open.
+[Attempt 004 evidence](evidence/books-snowflake-004.md)

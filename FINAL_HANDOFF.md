@@ -78,16 +78,23 @@ tokens, and 8,192 sampled tokens. Measured usage implies **USD
 
 ## Final live command
 
-The hosted TEXT-date rehearsal achieved Stage 1, Stage 2, and reward of
-1.0 with model-authored SQL for all three outputs. The next gate is a new
-native Snowflake rollout. Verify the current monitor attachment, trial
-balance, and at least 1.30 credits before suspension, then obtain separate
-authorization. The [latest validation record](evidence/books-hosted-text-validation.md)
-has the administrator's read-only checks, estimates, and evidence.
+Attempt 004 used the command below. Its authorization has been consumed.
+The model submitted publishers.sql on the reserved final turn. The
+pinned Snowflake grader returned Stage 1 = 13/15 and skipped Stage 2.
+Warehouse and trajectory reward agreed at 0.303333, which reached the
+offline Cookbook datums. Cleanup verified zero remaining run resources
+and a suspended warehouse. See the [attempt 004 record](evidence/books-snowflake-004.md).
+
+A future native attempt requires fresh authorization, stable access to
+both pinned Google Drive flat files from Airbyte workloads, and an
+administrator check of the trial balance, monitor attachment and at
+least 1.30 credits before immediate suspension. The local TEXT-date
+rehearsal still holds full scores on all three outputs.
+[Local evidence](evidence/books-hosted-text-validation.md)
 
 The candidate is Qwen/Qwen3.6-35B-A3B with the pinned no-thinking renderer,
 40 turns, 60 tool calls, and one fresh grading replay. The runner records
-prompt and action tokens in an ignored run directory. The prepared command
+prompt and action tokens in an ignored run directory. The archived command
 uses 40 minutes for agent actions and up to 25 minutes for host grading,
 then bounded cleanup. An accepted submission retains its sampled action
 and receives its completed grade before the reward reaches the caller.

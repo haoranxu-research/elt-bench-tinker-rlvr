@@ -370,3 +370,13 @@ with more than 11 minutes and thousands of sampled tokens left. The
 archived 35B full-score trajectory still submitted three files under the
 current budgets with inferred dates. It could not submit them on the TEXT
 mirror. [Per-turn timing, local controls and next gate](evidence/books-offline-readiness.md)
+
+## Native attempt 004
+
+The official run exposed a separate source-availability problem.
+Airbyte's Google Drive connector hit a TLS EOF while discovering
+address_status. The agent chose to drop both flat-file streams,
+so Stage 1 matched 13 of 15 tables and the official gate skipped
+Stage 2. It submitted only publishers.sql. The customer draft's
+last edit was untested, and authors.sql was absent.
+[Failure trace, reward, and follow-up](evidence/books-snowflake-004.md)
