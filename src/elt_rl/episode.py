@@ -585,6 +585,10 @@ class ELTEpisodeState:
                     for filename, sql in artifacts.items():
                         self._failed_public_checks.pop(filename, None)
                         problem = None
+                        if (filename == "publishers.sql" and hasattr(self.backend, "publisher_page_check")
+                                and "70% of the average number of pages of all books"
+                                in self.task.sections.get("publishers", "").lower()):
+                            problem = self.backend.publisher_page_check(self.warehouse_columns)
                         if (filename == "authors.sql" and hasattr(self.backend, "author_page_check")
                                 and "average total pages of all authors" in self.task.sections.get("authors", "").lower()):
                             problem = self.backend.author_page_check(self.warehouse_columns)

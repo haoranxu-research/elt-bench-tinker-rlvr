@@ -640,6 +640,24 @@ def test_books_output_shape_checks_public_columns_and_source_ids():
     assert backend.output_shape("authors", ("author_id", "author_name")) is None
 
 
+def test_public_publisher_page_check_flags_zero_above_global_threshold():
+    duckdb = pytest.importorskip("duckdb")
+    backend = official.SnowflakeBooksBackend.__new__(official.SnowflakeBooksBackend)
+    backend.database = "memory"
+    with duckdb.connect() as db:
+        db.execute("CREATE SCHEMA books")
+        db.execute("CREATE TABLE books.book AS SELECT * FROM (VALUES (1, 70), (2, 130), (3, NULL)) "
+                   "v(publisher_id, num_pages)")
+        db.execute("CREATE TABLE books.publishers AS SELECT * FROM (VALUES (1, 0), (2, 0), (3, 0), (4, 0)) "
+                   "v(publisher_id, num_books_pages_greater_than_70_per_of_avg)")
+        backend._lookup_rows = lambda query: db.execute(query).fetchall()
+        catalog = {"book": ["publisher_id", "num_pages"]}
+        warning = backend.publisher_page_check(catalog)
+        assert warning.startswith("1 publishers counted zero") and "70% is a fraction" in warning
+        db.execute("UPDATE books.publishers SET num_books_pages_greater_than_70_per_of_avg = 1 WHERE publisher_id=2")
+        assert backend.publisher_page_check(catalog) is None
+
+
 def test_public_author_page_check_uses_source_relationships_and_candidate_flag():
     duckdb = pytest.importorskip("duckdb")
     backend = official.SnowflakeBooksBackend.__new__(official.SnowflakeBooksBackend)

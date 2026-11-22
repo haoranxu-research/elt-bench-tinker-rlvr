@@ -372,6 +372,22 @@ class SnowflakeBooksBackend:
                 f"against {source_rows} source rows, with {missing_ids} source IDs missing. "
                 "Check the grain of each CTE and join.")
 
+    def publisher_page_check(self, sources: dict[str, list[str]]) -> str | None:
+        if not {"publisher_id", "num_pages"} <= set(sources.get("book", ())):
+            return None
+        schema = f"{self.database}.BOOKS."
+        (false_zeros,), = self._lookup_rows(
+            f"WITH page_average AS (SELECT AVG(num_pages) AS pages FROM {schema}book), "
+            f"qualifying AS (SELECT DISTINCT b.publisher_id FROM {schema}book b CROSS JOIN page_average a "
+            "WHERE b.num_pages > 0.70 * a.pages) "
+            f"SELECT COUNT(*) FROM {schema}publishers p JOIN qualifying q ON p.publisher_id = q.publisher_id "
+            "WHERE COALESCE(p.num_books_pages_greater_than_70_per_of_avg, 0) = 0"
+        )
+        if false_zeros:
+            return (f"{false_zeros} publishers counted zero books despite having a book above the public page threshold. "
+                    "Check that 70% is a fraction of the average across all books.")
+        return None
+
     def author_page_check(self, sources: dict[str, list[str]]) -> str | None:
         required = {"book": {"book_id", "num_pages"}, "book_author": {"author_id", "book_id"}}
         if not all(columns <= set(sources.get(table, ())) for table, columns in required.items()):

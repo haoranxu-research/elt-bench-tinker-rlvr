@@ -88,6 +88,15 @@ The follow-up public check detects the specific mismatch. The authorized
 native run has been used.
 [Attempt 005 evidence and offline diagnosis](evidence/books-snowflake-005.md)
 
+## Official attempt 006
+
+The fresh model submitted all three SQL files after loading all sources
+in Snowflake. Stage 1 was 1.0 and Stage 2 was 2/3. The author and
+customer outputs matched. The publisher page-threshold count was the
+only mismatch. Native and recorded trajectory rewards were 0.783333.
+The host verified cleanup and suspended warehouse state.
+[Native result and offline publisher check](evidence/books-snowflake-006.md)
+
 ## Final live command
 
 Attempt 004 used the command below. Its authorization has been consumed.

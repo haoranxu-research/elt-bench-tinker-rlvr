@@ -16,7 +16,7 @@ Its warehouse grade and trajectory reward agreed at 0.783333. Full native
 correctness remains open.
 [Local scoring evidence](evidence/books-full-baseline.md)
 [Native grading and diagnosis](evidence/books-snowflake-completion.md)
-[Latest complete native submission and diagnosis](evidence/books-snowflake-005.md)
+[Latest complete native submission and diagnosis](evidence/books-snowflake-006.md)
 [Latest hosted TEXT-date full-score rehearsal](evidence/books-hosted-text-validation.md)
 
 [Implementation design](DESIGN.md) · [Phase 1 evidence](evidence/phase1.txt) ·
