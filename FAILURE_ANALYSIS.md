@@ -380,3 +380,12 @@ so Stage 1 matched 13 of 15 tables and the official gate skipped
 Stage 2. It submitted only publishers.sql. The customer draft's
 last edit was untested, and authors.sql was absent.
 [Failure trace, reward, and follow-up](evidence/books-snowflake-004.md)
+
+## Native attempt 005
+
+Both Airbyte load passes matched all required rows. The model independently
+submitted all three models. Stage 2 matched publishers and customers and
+reported one author column mismatch. A developer-only comparison traced
+it to 3,780 unpriced authors incorrectly receiving a title. The public
+check now detects the missing priced candidate from observed source data.
+[Run and isolated diagnosis](evidence/books-snowflake-005.md)

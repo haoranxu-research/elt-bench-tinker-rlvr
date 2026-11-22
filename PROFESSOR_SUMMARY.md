@@ -64,3 +64,11 @@ grader matched 13 of 15 tables, skipped Stage 2, and returned 0.303333.
 The same reward reached the sampled trajectory and offline training
 interface. The native full-score milestone remains open.
 [Attempt 004 evidence](evidence/books-snowflake-004.md)
+
+Native attempt 005 completed both stages after loading all 15 required
+streams and accepting an independent complete model submission. The
+publisher and customer outputs matched. The author output mismatched
+one title column, leaving Stage 2 at 2/3 and all recorded rewards at
+0.783333. Developer-only diagnostics on the TEXT-date mirror verified
+the unpriced-title failure and the corresponding feedback check.
+[Attempt 005 evidence](evidence/books-snowflake-005.md)

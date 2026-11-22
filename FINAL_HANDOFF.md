@@ -78,11 +78,15 @@ tokens, and 8,192 sampled tokens. Measured usage implies **USD
 
 ## Next validation after attempt 004
 
-The corrected loader passed a fresh hosted 35B validation on DuckDB
-with TEXT dates. Both evaluator stages and the trajectory reward
-were 1.0. The refreshed administrator reading showed 0.92 credits before
-immediate suspension, below the 1.30-credit launch requirement.
-[Current evidence and native launch command](evidence/books-source-recovery.md#authorized-hosted-35b-validation-result)
+The corrected loader passed a fresh full-score hosted TEXT-date
+rehearsal. After the dedicated monitor quota was raised to 4.00 credits,
+native attempt 005 loaded all sources and accepted all three model SQL
+files. The official Stage 2 result was 2/3 because the author output
+returned titles for authors with no priced sales. Warehouse and
+trajectory reward both reached 0.783333, and cleanup was verified.
+The follow-up public check detects the specific mismatch. The authorized
+native run has been used.
+[Attempt 005 evidence and offline diagnosis](evidence/books-snowflake-005.md)
 
 ## Final live command
 

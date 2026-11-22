@@ -115,7 +115,8 @@ finished unsubmitted with reward 0.
 [Pilot evidence](evidence/tinker-pilot.md) [Earlier credentialed evidence](evidence/books-snowflake-final.md)
 
 For `books`, candidate checks inspect source keys, shipping labels, defined
-rates, and whether a proposed title is dominated by another observed sale.
+rates, whether a proposed title is dominated by another observed sale,
+and whether an author has any observed price to support a title.
 An unsuccessful check provides a repair opportunity within the episode.
 The pinned graders still compute the final score. The Qwen3.6-35B-A3B
 agent used the workflow to submit three exact outputs with both stages

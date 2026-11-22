@@ -761,14 +761,20 @@ def test_public_author_title_check_rejects_a_title_beaten_by_a_higher_sale():
     with duckdb.connect() as db:
         db.execute("CREATE SCHEMA books")
         db.execute("CREATE TABLE books.book AS SELECT * FROM (VALUES (1, 'First'), (2, 'Second')) v(book_id, title)")
-        db.execute("CREATE TABLE books.book_author AS SELECT * FROM (VALUES (1, 10), (2, 10)) v(book_id, author_id)")
-        db.execute("CREATE TABLE books.order_line AS SELECT * FROM (VALUES (1, 10), (1, 30), (2, 25)) v(book_id, price)")
-        db.execute("CREATE TABLE books.authors AS SELECT 10 AS author_id, 'Second' AS most_expensive_book")
+        db.execute("CREATE TABLE books.book_author AS SELECT * FROM (VALUES (1, 10), (2, 10), (3, 11)) v(book_id, author_id)")
+        db.execute("INSERT INTO books.book VALUES (3, 'Unpriced')")
+        db.execute("CREATE TABLE books.order_line AS SELECT * FROM (VALUES (1, 10), (1, 30), (2, 25), (3, NULL)) v(book_id, price)")
+        db.execute("CREATE TABLE books.authors AS SELECT * FROM (VALUES (10, 'Second'), (11, 'Unpriced'), "
+                   "(12, NULL)) v(author_id, most_expensive_book)")
         backend._lookup_rows = lambda query: db.execute(query).fetchall()
         sources = {"book": ["book_id", "title"], "book_author": ["author_id", "book_id"],
                    "order_line": ["book_id", "price"]}
-        assert "beaten by a higher sale" in backend.author_title_check(sources)
-        db.execute("UPDATE books.authors SET most_expensive_book = 'First'")
+        warning = backend.author_title_check(sources)
+        assert "beaten by a higher sale" in warning
+        assert "1 authors with no priced sales" in warning and "leave the title NULL" in warning
+        db.execute("UPDATE books.authors SET most_expensive_book = 'First' WHERE author_id = 10")
+        assert "1 authors with no priced sales" in backend.author_title_check(sources)
+        db.execute("UPDATE books.authors SET most_expensive_book = NULL WHERE author_id = 11")
         assert backend.author_title_check(sources) is None
 
 
