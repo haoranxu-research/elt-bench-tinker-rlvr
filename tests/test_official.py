@@ -1,8 +1,12 @@
 import json
 import os
 import shutil
+import socket
+import ssl
 import subprocess
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Thread
 from time import monotonic
 
 import pytest
@@ -112,6 +116,102 @@ def test_airbyte_terraform_errors_are_actionable_without_secrets(tmp_path, monke
     assert "private-secret-marker" not in str(caught.value)
 
 
+@pytest.mark.parametrize(("failures", "opaque_inventory"), [(1, None), (2, None), (1, []),
+                                                             (1, [{"name": "episode-address_status"}])])
+def test_airbyte_discovery_tls_interruption_preserves_plan_and_retries_before_sync(
+    tmp_path, monkeypatch, failures, opaque_inventory,
+):
+    template = tmp_path / "main.tf"
+    template.write_text("", encoding="utf-8")
+    runner = AirbyteRun(tmp_path / "private", "terraform", "http://127.0.0.1:8000/api/public/v1", 60)
+    plan = {"output": {"connections": {"value": {"address_status": "${connection_id}"}}},
+            "resource": {"airbyte_destination_postgres": {"books": {"workspace_id": "local-workspace"}},
+                         "airbyte_connection": {"address_status": {"name": "episode-address_status"}}}}
+    applies = []
+    jobs = []
+
+    def terraform(command, *, cwd, **_kwargs):
+        action = command[1]
+        if action == "apply":
+            applies.append((cwd / "pipeline.tf.json").read_bytes())
+            if len(applies) <= failures:
+                # Close a real loopback socket during a TLS handshake.
+                client, server = socket.socketpair()
+                with client, server:
+                    server.close()
+                    with pytest.raises((ssl.SSLError, ConnectionError)):
+                        ssl.create_default_context().wrap_socket(client, server_hostname="localhost")
+                message = (b"Source schema discovery failed: UNEXPECTED_EOF_WHILE_READING" if opaque_inventory is None
+                           else b"An unexpected problem has occurred.")
+                raise subprocess.CalledProcessError(1, command, stderr=message +
+                                                    b"\n  with airbyte_connection.address_status,\nprivate-secret-marker")
+        output = b'{"address_status":"connection-id"}' if action == "output" else b""
+        return subprocess.CompletedProcess(command, 0, stdout=output)
+
+    monkeypatch.setattr(subprocess, "run", terraform)
+    monkeypatch.setattr("elt_rl.airbyte.time.sleep", lambda _delay: None)
+    monkeypatch.setattr(runner, "_sync", lambda *args: jobs.append(args))
+    inventory_checks = []
+
+    def inventory(client, method, path, body):
+        assert client.url == "http://127.0.0.1:8000/api/v1"
+        assert (method, path, body) == ("POST", "/connections/list", {"workspaceId": "local-workspace"})
+        inventory_checks.append(body)
+        return {"connections": opaque_inventory}
+
+    monkeypatch.setattr(AirbyteRun, "_request", inventory)
+    if failures == 1 and not opaque_inventory:
+        runner.provision(template, plan, "local-user", "local-password")
+        assert jobs == [("address_status", "connection-id")]
+    else:
+        with pytest.raises(PipelineError, match="Restore access.*complete manifest") as error:
+            runner.provision(template, plan, "local-user", "local-password")
+        assert "private-secret-marker" not in str(error.value)
+        assert not jobs
+    assert len(inventory_checks) == (opaque_inventory is not None)
+    assert len(applies) == (1 if opaque_inventory else 2)
+    assert all(plan_bytes == applies[0] for plan_bytes in applies)
+
+
+def test_airbyte_job_poll_recovers_from_connection_drop_without_resubmitting(tmp_path, monkeypatch):
+    requests = []
+
+    class LocalJobs(BaseHTTPRequestHandler):
+        def do_POST(self):
+            requests.append("POST")
+            self.rfile.read(int(self.headers["Content-Length"]))
+            self._reply(b'{"jobId":7}')
+
+        def do_GET(self):
+            requests.append("GET")
+            if requests.count("GET") == 1:
+                self.connection.shutdown(socket.SHUT_RDWR)
+                return
+            self._reply(b'{"status":"succeeded"}')
+
+        def _reply(self, data):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *_args):
+            pass
+
+    with ThreadingHTTPServer(("127.0.0.1", 0), LocalJobs) as server:
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            runner = AirbyteRun(tmp_path, "terraform", f"http://127.0.0.1:{server.server_port}", 10)
+            runner.auth = "local-test"
+            monkeypatch.setattr("elt_rl.airbyte.time.sleep", lambda _delay: None)
+            runner._sync("flat_files", "connection-id")
+            assert requests == ["POST", "GET", "GET"]
+            assert runner.jobs[0]["status"] == "succeeded" and runner.active_job is None
+        finally:
+            server.shutdown()
+            thread.join()
+
+
 @pytest.fixture
 def checkout():
     default = Path(__file__).resolve().parents[2] / "upstream-elt-bench"
@@ -173,7 +273,7 @@ def test_official_books_public_task_and_airbyte_plan(checkout, tmp_path, monkeyp
         select_streams('{"sources":{"postgres":["../gold"]}}', available)
 
 
-def test_books_malformed_model_manifest_does_not_replace_saved_sources(checkout, tmp_path):
+def test_books_failed_load_and_invalid_manifest_preserve_saved_sources(checkout, tmp_path):
     bundle = official._read_yaml(checkout / "elt-bench/snowflake/books/config.yaml")
     loaded = []
 
@@ -181,6 +281,8 @@ def test_books_malformed_model_manifest_does_not_replace_saved_sources(checkout,
         def execute(self, stage, artifacts):
             assert stage == "load"
             loaded.append(select_streams(artifacts["load.json"], streams(bundle)))
+            if len(loaded) == 1:
+                raise PipelineError("source discovery failed; restore access and retry the saved manifest")
             return "loaded"
 
         def inspect(self):
@@ -206,18 +308,28 @@ def test_books_malformed_model_manifest_does_not_replace_saved_sources(checkout,
         assert "saved load.json" in episode.dispatch("write_pipeline_file", corrected, turn=5).text
         assert "was not changed" in episode.dispatch("write_pipeline_file", malformed, turn=6).text
         assert not loaded
-        assert "loaded" in episode.dispatch("execute_pipeline", {"stage": "load"}, turn=7).text
-        assert loaded == [sources]
+        assert "source discovery failed" in episode.dispatch("execute_pipeline", {"stage": "load"}, turn=7).text
+        assert "before writing transformations" in episode.dispatch(
+            "write_pipeline_file", {"path": "publishers.sql", "content": "SELECT 1"}, turn=7,
+        ).text
+        partial = {"path": "load.json", "content": {"sources": {
+            group: names for group, names in sources.items() if group != "flat_files"
+        }}}
+        rejection = episode.dispatch("write_pipeline_file", partial, turn=8).text
+        assert "flat_files.address_status, flat_files.order_status" in rejection
+        assert "load.json was not changed" in rejection
+        assert "loaded" in episode.dispatch("execute_pipeline", {"stage": "load"}, turn=9).text
+        assert loaded == [sources, sources]
 
         sql = "SELECT " + "x" * 1243 + "tail"
-        episode.dispatch("write_pipeline_file", {"path": "publishers.sql", "content": sql}, turn=8)
-        first_page = episode.dispatch("read_pipeline_file", {"path": "publishers.sql"}, turn=9)
+        episode.dispatch("write_pipeline_file", {"path": "publishers.sql", "content": sql}, turn=10)
+        first_page = episode.dispatch("read_pipeline_file", {"path": "publishers.sql"}, turn=11)
         assert "Next offset: 1250" in first_page.text
         assert episode.tool_schema("read_pipeline_file")["properties"]["offset"]["type"] == "integer"
         for offset in (1250, "1250"):
-            second_page = episode.dispatch("read_pipeline_file", {"path": "publishers.sql", "offset": offset}, turn=10)
+            second_page = episode.dispatch("read_pipeline_file", {"path": "publishers.sql", "offset": offset}, turn=12)
             assert "\ntail\n" in second_page.text
-        invalid_offset = episode.dispatch("read_pipeline_file", {"path": "publishers.sql", "offset": True}, turn=11)
+        invalid_offset = episode.dispatch("read_pipeline_file", {"path": "publishers.sql", "offset": True}, turn=13)
         assert "offset must be a nonnegative character index" in invalid_offset.text
 
 
@@ -584,7 +696,7 @@ def test_public_warning_survives_rewrite_until_retest(tmp_path):
         def close(self):
             pass
 
-    task = TaskDefinition("books", "task", ("load.json",), ("publishers.sql", "customers.sql"),
+    task = TaskDefinition("books", "task", ("load.json",), ("publishers.sql", "customers.sql", "authors.sql"),
                           lambda *_: Backend(), lambda _: Grade(), partial_transforms=True,
                           sections={"customers": "percentage of orders shipped internationally"},
                           output_columns={"customers.sql": ("rate",)})
@@ -599,14 +711,18 @@ def test_public_warning_survives_rewrite_until_retest(tmp_path):
         run("execute_pipeline", 5, stage="transform", file="publishers.sql")
         run("write_pipeline_file", 6, path="customers.sql", content="SELECT 0 AS rate FROM customer")
         assert "Public data check failed" in run("execute_pipeline", 7, stage="transform", file="customers.sql")
+        assert "Write only authors.sql" in episode.recovery_action()
+        run("write_pipeline_file", 8, path="authors.sql", content="SELECT * FROM author")
+        assert "Test saved authors.sql" in episode.recovery_action()
+        run("execute_pipeline", 9, stage="transform", file="authors.sql")
         assert "Repair the open public check for customers.sql" in episode.recovery_action()
-        run("write_pipeline_file", 8, path="customers.sql", content="SELECT NULL AS rate FROM customer")
-        assert "Undefined customer rates" in episode.compact_state(8)
-        assert episode.tested_files == ("publishers.sql",)
+        run("write_pipeline_file", 10, path="customers.sql", content="SELECT NULL AS rate FROM customer")
+        assert "Undefined customer rates" in episode.compact_state(10)
+        assert episode.tested_files == ("publishers.sql", "authors.sql")
         assert "Test saved customers.sql" in episode.recovery_action()
-        run("execute_pipeline", 9, stage="transform", file="customers.sql")
-        assert "Undefined customer rates" not in episode.compact_state(9)
-        assert episode.tested_files == ("publishers.sql", "customers.sql")
+        run("execute_pipeline", 11, stage="transform", file="customers.sql")
+        assert "Undefined customer rates" not in episode.compact_state(11)
+        assert episode.tested_files == ("publishers.sql", "customers.sql", "authors.sql")
 
 
 def test_public_customer_rate_check_uses_observed_shipping_and_percentage_range():
@@ -1148,8 +1264,9 @@ def test_official_episode_calls_two_isolated_warehouse_replays(checkout, tmp_pat
         assert "Next: execute_pipeline with stage=load" in complete
         del sources["flat_files"]
         partial = call("write_pipeline_file", 3, path="load.json", content=json.dumps({"sources": sources})).text
-        assert "Stage 2 requires all source streams" in partial
-        assert "Missing: flat_files.address_status, flat_files.order_status." in partial
+        assert "Missing required streams: flat_files.address_status, flat_files.order_status." in partial
+        assert "load.json was not changed" in partial
+        assert "flat_files" in json.loads((episode.artifact_dir / "load.json").read_bytes())["sources"]
         loaded = call("execute_pipeline", 4, stage="load").text
         assert "author=7" in loaded and "author(author_id, author_name)" in loaded
         assert "book(publication_date TEXT)" in loaded

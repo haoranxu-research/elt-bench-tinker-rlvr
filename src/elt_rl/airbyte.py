@@ -13,7 +13,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
-from .contracts import PipelineError, grading_time_left
+from .contracts import GradingTimeout, PipelineError, grading_time_left
 
 GROUPS = ("postgres", "mongodb", "aws_s3", "flat_files", "custom_api")
 
@@ -59,14 +59,19 @@ def select_streams(text: str, available: Mapping[str, Mapping[str, str]]) -> dic
         raise PipelineError(f"load.json requires exactly one top-level key, sources. Example shape: {example}. "
                             "Use write_pipeline_file to include every group and stream listed by read_task.")
     selected = payload["sources"]
-    if not isinstance(selected, dict) or not selected or not selected.keys() <= available.keys():
-        raise PipelineError("sources must be a nonempty object using approved groups: " + ", ".join(available))
+    if not isinstance(selected, dict) or not selected.keys() <= available.keys():
+        raise PipelineError("sources must be an object using approved groups: " + ", ".join(available))
     for group, names in selected.items():
-        if (not isinstance(names, list) or not names or
+        if (not isinstance(names, list) or
             any(not isinstance(name, str) or name not in available[group] for name in names) or
             len(set(names)) != len(names)):
             raise PipelineError(f"source groups require unique approved stream names. For {group}, use a nonempty "
                                 f"array containing names from: {', '.join(available[group])}.")
+    missing = [f"{group}.{name}" for group, names in available.items()
+               for name in names if name not in selected.get(group, ())]
+    if missing:
+        raise PipelineError(f"Missing required streams: {', '.join(missing)}. Keep every listed stream. "
+                            "For a connection failure, restore connectivity and retry the complete saved manifest.")
     return selected
 
 
@@ -186,6 +191,18 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
+class _ConnectionSetupError(PipelineError):
+    """A failed connection setup that may be safe to retry."""
+
+    def __init__(self, message: str, unconfirmed_connections: tuple[str, ...] = ()):
+        super().__init__(message)
+        self.unconfirmed_connections = unconfirmed_connections
+
+
+class _TransientAirbyteError(PipelineError):
+    """A request encountered a temporary gateway or transport failure."""
+
+
 class AirbyteRun:
     """Manage only the connections belonging to this private Terraform state."""
 
@@ -195,10 +212,19 @@ class AirbyteRun:
         self.url = url.rstrip("/")
         self.timeout = timeout
         self.grading_deadline: float | None = None
+        self.action_deadline: float | None = None
         self.apply_started = False
         self.active_job: str | None = None
         self.jobs: list[dict[str, str]] = []
         self._opener = build_opener(ProxyHandler({}), NoRedirect())
+
+    def _time_left(self, limit: float) -> float:
+        if self.action_deadline is not None:
+            remaining = self.action_deadline - time.monotonic()
+            if remaining <= 0:
+                raise PipelineError("agent action deadline expired during Airbyte load")
+            limit = min(limit, remaining)
+        return grading_time_left(self.grading_deadline, limit)
 
     def _tf(self, command: str, *args: str) -> bytes:
         try:
@@ -206,7 +232,7 @@ class AirbyteRun:
                 [self.terraform, command, *args], cwd=self.directory, env=private_environment(),
                 stdout=subprocess.PIPE if command == "output" else subprocess.DEVNULL,
                 stderr=subprocess.PIPE if command == "apply" else subprocess.DEVNULL,
-                timeout=grading_time_left(self.grading_deadline, self.timeout), check=True,
+                timeout=self._time_left(self.timeout), check=True,
             )
         except subprocess.TimeoutExpired:
             raise PipelineError(f"Airbyte Terraform {command} timed out") from None
@@ -215,8 +241,25 @@ class AirbyteRun:
             addresses = sorted(set(re.findall(r"\bwith (airbyte_(?:connection|source_[a-z0-9_]+)\.[a-z][a-z0-9_]*),",
                                               diagnostic)))
             scope = f" for {', '.join(addresses)}" if addresses else ""
-            raise PipelineError(f"Airbyte Terraform {command} failed (exit {error.returncode}){scope}; "
-                                "check the private Airbyte workload logs") from None
+            failure = f"Airbyte Terraform {command} failed (exit {error.returncode}){scope}"
+            # Retry an explicit catalog-discovery failure, where the connection
+            # creation did not reach the mutation. Keep raw provider errors private.
+            discovery = re.search(r"fail\w* to (?:discover|fetch)(?: [\w-]+){0,4} (?:schema|catalog)|"
+                                  r"(?:discovery|schema catalog) (?:has )?failed|"
+                                  r"(?:could not|unable to) (?:discover|fetch) (?:the )?(?:schema|catalog)",
+                                  diagnostic, re.I)
+            permanent = re.search(r"unauthori[sz]ed|forbidden|invalid credentials|certificate verify failed|"
+                                  r"authentication failed|\b(?:401|403|404)\b", diagnostic, re.I)
+            opaque = "an unexpected problem has occurred" in diagnostic.lower()
+            if (command == "apply" and addresses and (discovery or opaque) and not permanent
+                    and all(address.startswith("airbyte_connection.") for address in addresses)):
+                reason = "source catalog discovery failed" if discovery else "Airbyte reported a connection setup error"
+                raise _ConnectionSetupError(
+                    f"{failure}: {reason}. Check the affected connector's network and TLS logs. "
+                    "Restore access to the original source and retry the saved complete manifest.",
+                    tuple(address.split(".", 1)[1] for address in addresses) if opaque else (),
+                ) from None
+            raise PipelineError(f"{failure}; check the private Airbyte workload logs") from None
         except OSError:
             raise PipelineError(f"could not launch Terraform {command}") from None
         return result.stdout
@@ -228,7 +271,15 @@ class AirbyteRun:
         self.auth = base64.b64encode(f"{username}:{password}".encode()).decode()
         self._tf("init", "-input=false", "-no-color")
         self.apply_started = True
-        self._tf("apply", "-auto-approve", "-input=false", "-no-color", "-parallelism=1")
+        options = ("-auto-approve", "-input=false", "-no-color", "-parallelism=1")
+        try:
+            self._tf("apply", *options)
+        except _ConnectionSetupError as error:
+            if error.unconfirmed_connections and not self._connections_absent(plan, error.unconfirmed_connections):
+                raise PipelineError(f"{error} No retry: the connection inventory could not rule out a prior creation.") from None
+            # Reuse the same state and plan. No sync has been queued yet.
+            time.sleep(min(2, self._time_left(2)))
+            self._tf("apply", *options)
         try:
             connections = json.loads(self._tf("output", "-json", "connections"))
         except ValueError:
@@ -240,18 +291,46 @@ class AirbyteRun:
         for name, identifier in sorted(connections.items()):
             self._sync(name, identifier)
 
+    def _connections_absent(self, plan: dict, keys: tuple[str, ...]) -> bool:
+        try:
+            resources = plan["resource"]
+            scope = next(kind["books"]["workspace_id"] for name, kind in resources.items()
+                         if name.startswith("airbyte_destination_"))
+            names = {resources["airbyte_connection"][key]["name"] for key in keys}
+            client = AirbyteRun(self.directory, self.terraform, self.url.removesuffix("/api/public/v1") + "/api/v1",
+                                self.timeout)
+            client.auth = self.auth
+            client.action_deadline, client.grading_deadline = self.action_deadline, self.grading_deadline
+            rows = client._request("POST", "/connections/list", {"workspaceId": scope})["connections"]
+            return isinstance(rows, list) and all(isinstance(row.get("name"), str) and row["name"] not in names
+                                                  for row in rows)
+        except GradingTimeout:
+            raise
+        except (PipelineError, KeyError, AttributeError, TypeError, StopIteration):
+            return False
+
     def _request(self, method: str, path: str, body: dict | None = None) -> dict:
+        try:
+            return self._request_once(method, path, body)
+        except _TransientAirbyteError:
+            if method != "GET":
+                raise
+            time.sleep(min(2, self._time_left(2)))
+            return self._request_once(method, path, body)
+
+    def _request_once(self, method: str, path: str, body: dict | None) -> dict:
         headers = {"Authorization": f"Basic {self.auth}", "Accept": "application/json",
                    "Content-Type": "application/json"}
         request = Request(self.url + path, method=method, headers=headers,
                           data=json.dumps(body).encode() if body else None)
         try:
-            with self._opener.open(request, timeout=grading_time_left(self.grading_deadline, 15)) as response:
+            with self._opener.open(request, timeout=self._time_left(15)) as response:
                 data = response.read(1_048_577)
         except HTTPError as error:
-            raise PipelineError(f"Airbyte jobs API returned HTTP {error.code}") from None
+            kind = _TransientAirbyteError if error.code in {408, 429, 502, 503, 504} else PipelineError
+            raise kind(f"Airbyte jobs API returned HTTP {error.code}; check the local Airbyte gateway") from None
         except (URLError, OSError):
-            raise PipelineError("Airbyte jobs API connection failed") from None
+            raise _TransientAirbyteError("Airbyte jobs API connection failed; check the local Airbyte tunnel") from None
         try:
             result = json.loads(data) if data else {}
         except ValueError:
@@ -267,9 +346,7 @@ class AirbyteRun:
         if not job_id.isascii() or not job_id.isdecimal():
             raise PipelineError("Airbyte did not return a valid sync job ID")
         self.active_job = job_id
-        deadline = time.monotonic() + self.timeout
-        if self.grading_deadline is not None:
-            deadline = min(deadline, self.grading_deadline)
+        deadline = time.monotonic() + self._time_left(self.timeout)
         while time.monotonic() < deadline:
             status = self._request("GET", f"/jobs/{job_id}").get("status")
             if status in {"succeeded", "failed", "cancelled", "canceled", "incomplete"}:
@@ -286,6 +363,7 @@ class AirbyteRun:
 
     def cleanup(self) -> None:
         self.grading_deadline = None
+        self.action_deadline = None
         try:
             if self.active_job:
                 self._request("DELETE", f"/jobs/{self.active_job}")

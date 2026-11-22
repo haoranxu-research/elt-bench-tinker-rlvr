@@ -85,6 +85,7 @@ BOOKS_INSTRUCTION = (
     "wait for a successful save receipt, then execute_pipeline with stage=load. "
     "Keep every listed source stream in the manifest. Dropping a stream after a connection error blocks Stage 2. "
     "Use bare filenames. Inspect actual warehouse columns and read the relevant model and relationship sections before writing SQL. "
+    "Read each needed section once. You can request several independent sections in the same turn. "
     "Start with one short independent transformation and get it tested. Check each join key against the schema "
     "and qualify any column shared by several joined inputs. "
     "Inspect source values before filtering coded labels. Keep undefined rates NULL unless the task says to fill them. "
@@ -103,7 +104,9 @@ BOOKS_INSTRUCTION = (
     "Use inspect_values to check source formats instead of replacing a full draft with a diagnostic query. "
     "Use the schema and public requirements already in the latest load or compaction observation. "
     "Inspect a specific table only to resolve a missing fact. Get an execution result for every required model "
-    "before rereading tested files. Keep tested files unless a public check identifies a problem. Do not revise a saved "
+    "before spending multiple turns repairing any one model. If a repair needs more investigation, "
+    "test the next unattempted model first, then return to the error. "
+    "Keep tested files unless a public check identifies a problem. Do not revise a saved "
     "draft again until you have tested it. You can call "
     "write_pipeline_file and then execute_pipeline for that file in the same turn. "
     "Review the public requirements and "
@@ -215,6 +218,8 @@ class ELTEpisodeState:
             except PipelineError as exc:
                 value = f"ERROR: {exc}"
                 self.latest_error = value[:1100]
+                if self.task.partial_transforms and self._loaded and name == "execute_pipeline":
+                    value += "\nNext pending action: " + self.recovery_action()
             if self.accepted_submission is not None:
                 return Feedback(value, accepted=True)
             if self.task.partial_transforms and self._grade is None:
@@ -432,16 +437,21 @@ class ELTEpisodeState:
                 return "Call execute_pipeline with stage=load for the saved load manifest."
             return "Use write_pipeline_file to save the load manifest."
         for name in self.task.transform_artifacts:
+            if name in self._unattempted_files:
+                return (f"The source data is loaded. Test saved {name} with execute_pipeline, "
+                        f"stage=transform and file={name}.")
+        for name in self.task.transform_artifacts:
+            if not (self.artifact_dir / name).exists():
+                return f"The source data is loaded. Write only {name} with write_pipeline_file."
+        for name in self.task.transform_artifacts:
             if name in self._tested_files:
                 continue
             if name in self._failed_transforms and name not in self._unattempted_files:
                 previous = (" Its preceding draft is available with version=previous."
                             if name in self._previous_drafts else "")
                 return f"Repair saved {name} using the last execution error before testing it again.{previous}"
-            if (self.artifact_dir / name).exists():
-                return (f"The source data is loaded. Test saved {name} with execute_pipeline, "
-                        f"stage=transform and file={name}.")
-            return f"The source data is loaded. Write only {name} with write_pipeline_file."
+            return (f"The source data is loaded. Test saved {name} with execute_pipeline, "
+                    f"stage=transform and file={name}.")
         if self._failed_public_checks:
             name = next(iter(self._failed_public_checks))
             return f"Repair the open public check for {name}, then re-execute that file. Keep the other tested files."
@@ -477,16 +487,13 @@ class ELTEpisodeState:
             raise PipelineError("artifact must be valid UTF-8") from None
         if len(encoded) > self.config.max_artifact_bytes:
             raise PipelineError("artifact exceeds size limit")
-        missing_streams = []
         if path == "load.json" and self.task.load_streams:
             from .airbyte import select_streams
 
             try:
-                selected = select_streams(content, self.task.load_streams)
+                select_streams(content, self.task.load_streams)
             except PipelineError as error:
                 raise PipelineError(f"{error} load.json was not changed.") from None
-            missing_streams = [f"{group}.{stream}" for group, streams in self.task.load_streams.items()
-                               for stream in streams if stream not in selected.get(group, ())]
         target = self.artifact_dir / path
         if self.task.partial_transforms and target.is_file():
             current = target.read_bytes()
@@ -510,9 +517,6 @@ class ELTEpisodeState:
             self.source_labels = ""
         if not self.task.partial_transforms:
             return f"saved {path}"
-        if missing_streams:
-            return (f"saved {path} ({len(encoded)} bytes). Stage 2 requires all source streams. "
-                    f"Missing: {', '.join(missing_streams)}. Add them to load.json before executing load.")
         stage = "load" if path in self.task.load_artifacts else "transform"
         target_args = f" and file={path}" if stage == "transform" else ""
         previous = (" The previous SQL draft is available with read_pipeline_file version=previous."
@@ -534,7 +538,10 @@ class ELTEpisodeState:
             self._loaded = False
             self._tested_turn = None
             self._tested_files.clear()
-            result = self.backend.execute("load", self._read(self.task.load_artifacts))
+            artifacts = self._read(self.task.load_artifacts)
+            if self.action_deadline is not None and hasattr(self.backend, "set_load_deadline"):
+                self.backend.set_load_deadline(self.action_deadline)
+            result = self.backend.execute("load", artifacts)
             self._loaded = True
             if self.task.load_streams and hasattr(self.backend, "columns"):
                 self.warehouse_columns = self.backend.columns()

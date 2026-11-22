@@ -76,6 +76,12 @@ The uncached bound was **USD 0.095084544** for 24 turns, 12,288 context
 tokens, and 8,192 sampled tokens. Measured usage implies **USD
 0.015649827**. The DuckDB rehearsal used no Snowflake compute.
 
+## Next validation after attempt 004
+
+The loader now rejects incomplete manifests and has bounded connection
+recovery. Use the updated commands and cost estimates for a new, separately
+authorized validation. [Source recovery and next commands](evidence/books-source-recovery.md)
+
 ## Final live command
 
 Attempt 004 used the command below. Its authorization has been consumed.

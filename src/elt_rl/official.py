@@ -139,6 +139,7 @@ def _pack_grade(results_log: str, stage2: dict | None, raw_tables: frozenset[str
 class SnowflakeBooksBackend:
     transform_attempt_limit = MAX_TRANSFORM_ATTEMPTS
     grading_deadline: float | None = None
+    load_deadline: float | None = None
 
     def __init__(self, directory: Path, episode: EpisodeConfig, config: OfficialConfig,
                  bundle: dict, credentials: dict, raw_tables: frozenset[str]):
@@ -170,6 +171,9 @@ class SnowflakeBooksBackend:
 
     def set_grading_deadline(self, deadline: float) -> None:
         self.grading_deadline = deadline
+
+    def set_load_deadline(self, deadline: float) -> None:
+        self.load_deadline = deadline
 
     def _run_sql(self, statements: list[str], *, artifact_names: Mapping[int, str] | None = None):
         import snowflake.connector
@@ -270,6 +274,7 @@ class SnowflakeBooksBackend:
         self._run_sql([f"CREATE SCHEMA {self.database}.BOOKS"])
         self.airbyte = AirbyteRun(prefix, self.config.terraform, self.config.airbyte_url, self.config.service_timeout)
         self.airbyte.grading_deadline = self.grading_deadline
+        self.airbyte.action_deadline = self.load_deadline
         try:
             airbyte_auth = self.bundle["Airbyte"]["config"]
             self.airbyte.provision(self.config.checkout / "setup" / "main.tf", plan,

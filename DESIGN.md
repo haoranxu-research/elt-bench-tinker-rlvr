@@ -131,8 +131,9 @@ remains open. [Native evidence](evidence/books-snowflake-completion.md)
 The tool state distinguishes tested, failed and newly saved SQL. Context
 compaction carries per-file execution failures and open public checks. The
 agent can read the preceding SQL draft explicitly after an overwrite, and
-targeted schema inspection returns physical source types. A manifest
-save now names any omitted source streams before loading. The hosted
+targeted schema inspection returns physical source types. Saving an incomplete manifest leaves the previous valid file in place.
+The loader bounds discovery and status retries before submission.
+[Source recovery evidence](evidence/books-source-recovery.md). The hosted
 TEXT-date mirror passed both stages. Attempt 004 separately recorded
 a source discovery failure and an officially graded partial submission.
 [Local rehearsal](evidence/books-hosted-text-validation.md)
