@@ -37,11 +37,11 @@ automatically on a timeout.
 
 ## Official Snowflake books
 
-Use the pinned ELT-Bench checkout and public source files. The Windows checkout
-already has all 15 source inputs and three reference CSVs in ignored
-`runs/books-assets/`. The host passed a real loopback HTTP test for the three
-REST streams. Airbyte has completed a real local PostgreSQL sync. The scored
-Snowflake rollout awaits authorized account access. [Runtime evidence](evidence/books-docker-runtime.md)
+Use the pinned ELT-Bench checkout and stage the 15 source inputs and three
+reference CSVs in an ignored directory such as `runs/books-assets/`. The
+verified native rollout loaded all 15 tables through Airbyte and earned
+1.0 in both official stages. The sections below describe how to reproduce
+that setup on an authorized account. [Native evidence](evidence/books-snowflake-007.md)
 
 ### 1. Prepare and verify the local sources
 
@@ -524,14 +524,12 @@ the matching hourly windows. Keep delayed metering pending until it appears.
 The warehouse view reports usage credits, and cloud-services credits can
 differ from billed credits. [Warehouse metering](https://docs.snowflake.com/en/sql-reference/account-usage/warehouse_metering_history)
 
-For the proposed Qwen3.6-35B-A3B rollout, use the pinned no-thinking renderer
-and cache the public tokenizer on S before launch. The account's
-read-only capabilities response confirms base-model sampling availability.
-The local DuckDB rehearsal reached full correctness with this model and
-renderer. The prepared official command matches its turn, token, and
-transform budgets with a 40-minute agent deadline and separate bounded
-host grading. [Latest readiness](evidence/books-snowflake-deadlines.md)
-[Full-score evidence and live preparation](evidence/books-full-baseline.md)
+The full-score Qwen3.6-35B-A3B run used the pinned no-thinking renderer.
+Cache its public tokenizer before launch and check sampling availability
+for the account you intend to use. The verified profile uses a 40-minute
+agent deadline and a separate bounded host grading window.
+[Verified launch profile](FINAL_HANDOFF.md#final-live-command) ·
+[Deadline investigation](evidence/books-snowflake-deadlines.md)
 
 The second November 20 credentialed attempt loaded all 15 streams into
 Snowflake. Validation of the sampled transformations blocked submission.

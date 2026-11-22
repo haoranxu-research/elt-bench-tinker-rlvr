@@ -57,7 +57,7 @@ Private evidence under `runs/books-9b-rehearsal-live/` includes
 `decoded-actions.jsonl`, the three SQL files and manifest in
 `pipelines/`, the tool trace, the unsubmitted manifest, and
 `audit-result.json` with hashes and the billing snapshot. The executed
-[hosted command](../FINAL_HANDOFF.md#hosted-9b-rehearsal) at commit
+[historical hosted command](<https://github.com/haoranxu-research/elt-bench-tinker-rlvr/blob/7924ddaa1e1137c019eed4b913ffb73330068626/FINAL_HANDOFF.md#hosted-9b-rehearsal>) at commit
 `7924dda` used output path `runs/books-9b-rehearsal-live` and returned
 exit code 2.
 

@@ -1,81 +1,69 @@
-# ELT-Bench reinforcement learning with verifiable rewards
+# ELT-Bench environment design
 
-## Agent interface
+## What the agent does
 
-The agent observes the public ELT task, permitted sources and output files,
-actual warehouse schema and types, and execution feedback. It can read the
-task and inspect the workspace or warehouse. It writes the load manifest
-and SQL using `write_pipeline_file`, runs a load or transformation with
-`execute_pipeline`, and submits tested files with `submit_pipeline`.
-The official Books tools can read saved SQL in pages and show observed
-values for selected source columns.
+The agent reads the public task, inspects the source schema, saves a load
+manifest, and asks the environment to load it. It then writes SQL, runs
+it, and submits the tested files. The tools expose the task and source
+types, the working warehouse, and the agent's own files. Only
+`write_pipeline_file` changes an artifact. `execute_pipeline` runs saved
+artifacts and returns file-specific errors. `submit_pipeline` accepts a
+tested version for grading.
 
-Only a successful write changes a file. Editing invalidates that file's
-test. Single-file execution exposes the relevant SQL error and preserves
-other tested files. Incomplete load manifests leave the previously valid
-manifest intact. Public data checks report observed anomalies such as an
-undefined rate with a nonempty denominator. They run on source or candidate
-data and use no hidden expected outputs.
+Each episode has its own workspace and warehouse. A successful load
+enables transformation testing. Editing a SQL file clears its test
+status while preserving other tested files. Books supports a complete
+submission or an explicit partial submission of tested files. Acceptance
+ends model actions. An episode that exhausts its budget without
+submitting earns zero.
 
-## Episode lifecycle and limits
+## Why grading uses a fresh warehouse
 
-An episode loads the declared sources, tests current SQL, and accepts an
-explicit submission. Complete submission requires all current SQL files
-to have been tested. Partial submission can use the tested subset and
-missing models earn no Stage 2 credit. An unsubmitted trajectory earns zero.
+The working warehouse can contain output left over from earlier drafts.
+The host freezes the accepted manifest and SQL, reloads the sources in a
+fresh namespace, and runs exactly those files. This makes the reward
+depend on what the submitted pipeline can reproduce. Working state and
+grader exports are isolated so they cannot silently supply missing output.
 
-Context compaction preserves source schema, artifact status and recent
-errors. The tested SQL stays on disk. The runner accounts for actual
-rendered prompt length and bounds output per request. It reserves a final
-turn, tool slot and measured token allowance for an explicit submission.
-An interrupted or malformed work action can receive bounded recovery.
-The action still counts against its original budget.
+For Books, the pinned ELT-Bench scripts check exact raw table counts
+in Stage 1. A full Stage 1 score opens Stage 2, which compares the
+transformed tables. The environment combines the executed scores as
+`0.35 × Stage 1 + 0.65 × Stage 2`. Source checks can help the agent repair
+its SQL during work. Only the official grader computes the two scores.
+The verified native profile gives the agent 40 minutes to act and has a
+separate 25-minute host grading allowance. The host attaches the completed
+reward to the original sampled submission before computing returns.
 
-## Warehouse and evaluation
+## How trajectories become training inputs
 
-Each episode owns its workspace and warehouse namespace. The local
-example uses SQLite. The Books rehearsal uses staged official inputs on
-DuckDB. The live official adapter loads through six Airbyte connections
-into Snowflake, validates single SELECT statements over approved raw
-tables, and materializes the three requested models. It keeps credentials
-and evaluator assets outside model-accessible paths.
+The Tinker Cookbook renders the conversation as token observations and
+records sampled action tokens with their original log probabilities. Given
+a group of rollout returns, it computes centered advantages and assembles
+training examples that mask prompt tokens out of the loss. The project
+checks that each training target and log probability matches its sampled
+action. A group with identical returns provides no update signal. The
+live LoRA pilot tested this path on SQLite rewards. The Snowflake run
+verified grading and reward alignment without training on that rollout.
+[Native run](evidence/books-snowflake-007.md) · [LoRA pilot](evidence/tinker-pilot.md)
 
-A submission freezes the current manifest and SQL. The host replays them
-in a new namespace and invokes the pinned official grader. Stage 1 checks
-all required raw tables and counts. Only Stage 1 = 1.0 permits Stage 2,
-which compares transformed outputs by the official rules. The reward
-weights Stage 1 by 35% and Stage 2 by 65%. Host-only checks and optional
-changed-input experiments have no effect on this score.
+## What varies across warehouses
 
-The model stops acting when a submission is accepted. The native profile
-uses a 40-minute action deadline and a separately bounded 25-minute host
-grading phase. A grading timeout records zero. A completed grade attaches
-to the original sampled submission transition before returns are computed.
-Cleanup covers both warehouse namespaces and their Airbyte resources.
-Query, tool, token and time limits bound each run, with a dedicated
-Snowflake monitor as an external backstop.
+The episode owns the tools, artifact state, submission and cleanup
+sequence. A task supplies its instructions, allowed files, backend
+factory, and verifier. The backend handles loading, query execution, and
+warehouse inspection. SQLite supports the self-contained example,
+DuckDB mirrors selected source types for rehearsal, and the Snowflake
+adapter uses Airbyte and the pinned grader for native verification.
 
-## Tinker and new destinations
+## Integrity and runtime
 
-The pinned Cookbook renderer converts tool interactions to token
-observations and actions. The recipe pairs sampled action tokens with
-their original behavior log probabilities and masks, then assigns
-advantages from grouped execution returns. A constant-return group
-produces no update. The rank-16 pilot made one `forward_backward` and
-one `optim_step` call, then checked the updated state and checkpoint.
-
-To add a destination, implement the warehouse backend and host verifier,
-then register them with a `TaskDefinition` describing public instructions
-and allowed artifacts. The episode, scoring interface and Tinker adapter
-can be reused.
-
-## Verified result
-
-Independent Qwen3.6-35B-A3B SQL achieved Stage 1, Stage 2, and returned
-reward of 1.0 on the official Snowflake Books task. The offline audit
-matched the native grade to sampled actions and training datums. The
-separate live Tinker update used SQLite rewards. These experiments
-demonstrate end-to-end execution and a genuine optimizer update on their
-respective runs. [Native evidence](evidence/books-snowflake-007.md) ·
-[Optimizer evidence](evidence/tinker-pilot.md) ·
-[Technical report](TECHNICAL_REPORT.md)
+The agent has no shell or general file access. SQL is restricted to
+reading approved raw tables, and benchmark references and credentials
+stay on the host. Fresh replay guards against stale outputs, but fixed
+inputs still allow a hard-coded pipeline to score well. A separate
+synthetic test measures that weakness under controlled input changes.
+Airbyte loading in both working and grading warehouses dominated the
+native run. File-level testing avoids rebuilding unrelated outputs.
+Tool, token, query, and wall-clock limits bound work, and the reserved
+submission action leaves the agent a way to hand in tested files.
+[Development evidence and limitations](TECHNICAL_REPORT.md)

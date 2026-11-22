@@ -56,7 +56,7 @@ Private evidence is under `runs/books-9b-reserve-replay/`, with
 
 ## Next authorized verification
 
-Run the [prepared hosted 9B command](../FINAL_HANDOFF.md#hosted-9b-rehearsal)
+Run the [historical hosted 9B command](<https://github.com/haoranxu-research/elt-bench-tinker-rlvr/blob/7cdc30d5114154c29d0604d3ec7da11d4c0cce91/FINAL_HANDOFF.md#hosted-9b-rehearsal>)
 once after separate authorization. It uses the same staged DuckDB inputs,
 20 total turns, 32 tool calls, a 12,288-token context, and a 2,048-token
 working per-turn limit. The 6,144 sampled tokens are split into up to

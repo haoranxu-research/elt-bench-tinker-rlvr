@@ -1,36 +1,28 @@
-# ELT-Bench RLVR starter implementation
+# ELT-Bench RLVR starter project
 
-The project provides a stateful reinforcement learning environment for
-extraction, loading, and transformation. A model reads the public task,
-selects sources, writes SQL, executes and repairs it, and explicitly
-submits tested files. Host-side evaluation computes reward by replaying
-the submitted pipeline in a clean warehouse. The same episode interface
-supports credential-free SQLite, a DuckDB rehearsal, and official
-Airbyte-to-Snowflake execution.
+I built an environment in which a model loads source data, writes and
+tests SQL, and submits the resulting pipeline for execution-based grading.
+The most important design choice was to grade the submitted files in a
+fresh warehouse. During repair, the working warehouse can contain output
+from an earlier draft. Starting clean tests whether the accepted files
+alone can reproduce the result. [Implementation design](DESIGN.md)
 
-**The official Books task achieved full correctness on Snowflake.**
-Qwen3.6-35B-A3B independently generated and submitted
-`publishers.sql`, `customers.sql`, and `authors.sql`. Airbyte loaded
-15 tables and 84,337 rows through six connections. The pinned evaluators
-returned Stage 1 = 1.0 and Stage 2 = 1.0. The warehouse and trajectory both
-returned 1.0. An offline audit matched 9,334 original sampled action tokens
-and their log probabilities to four training datums. Both transient
-databases and their Airbyte resources were removed, and the warehouse
-was suspended. [Official run and independent audits](evidence/books-snowflake-007.md)
+On the official ELT-Bench Books task, Qwen3.6-35B-A3B independently
+generated and submitted all three transformations. Airbyte loaded
+15 tables and 84,337 rows into Snowflake. Both pinned evaluation stages
+scored **1.0**, and the trajectory received the same **1.0** reward as the
+warehouse. The audit matched the submitted files to the model's sampled
+actions, then verified reward propagation into offline Tinker training
+examples. [Native run and audit](evidence/books-snowflake-007.md)
 
-**The separate Tinker pilot completed one real LoRA optimizer update.**
-Three SQLite rollouts earned 1.0, 0.0, and 1.0. The pilot verified a
-post-update change in action log probabilities and matching checkpoint
-metadata. The evidence verifies an update on execution-derived rewards.
-It provides no estimate of model performance improvement.
+A separate Tinker pilot completed one real LoRA optimizer update using
+execution-derived SQLite rewards and verified the updated state and
+checkpoint. The pilot measured an update on a training datum. It did
+not evaluate downstream model performance.
 [Optimizer evidence](evidence/tinker-pilot.md)
 
-**An optional changed-input check exposed fixed-fixture failures.**
-The data-derived SQLite pipeline retained a reward of 1.0. A pipeline
-with fixed answers fell from 1.0 to 0.35 under controlled input changes.
-The extra replay took about 64 milliseconds for that case. These are
-synthetic, host-only results separate from the official score.
-[Robustness results](evidence/changed-input-final.md)
-
-[Implementation design](DESIGN.md) · [Technical report](TECHNICAL_REPORT.md) ·
-[Reproduction and handoff](FINAL_HANDOFF.md)
+I also tested a small limitation of fixed-fixture grading. Changing
+synthetic order assignments and amounts left the data-derived pipeline
+at **1.0** and reduced a hard-coded pipeline from **1.0 to 0.35**. That
+experiment ran separately from the official benchmark.
+[Technical report](TECHNICAL_REPORT.md) · [Reproduction guide](README.md)

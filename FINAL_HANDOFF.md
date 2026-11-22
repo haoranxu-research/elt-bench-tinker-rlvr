@@ -24,13 +24,15 @@ in [README.md](README.md). From the repository root:
 
 ```powershell
 .\.venv\Scripts\python.exe -m elt_rl.cli examples/customer_orders.jsonl
-.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe -m pytest -q --basetemp .venv/pytest-run
 .\.venv\Scripts\python.exe -m elt_rl.robustness --suite --repetitions 3
 ```
 
 The final full offline suite passed **130 tests in 53.95 seconds** with the
 pinned Cookbook and provider, cached public Qwen tokenizer, and optional
-real renderer and local Terraform checks enabled. Set
+real renderer and local Terraform checks enabled. The verified Windows
+environment used CPU PyTorch from the base interpreter as described in
+the [integration setup](README.md#optional-integration-tests). Set
 `ELT_TEST_REAL_RENDERER=1` and `ELT_TEST_TERRAFORM` to the local Terraform
 executable to include those checks. The executed logs are in
 `runs/books-offline-readiness/goal-final-tests.txt` and

@@ -43,7 +43,7 @@ in the [local readiness record](books-model-readiness.md).
 ## Remaining paid actions
 
 1. Authorize one hosted rehearsal using the command in the
-   [handoff](../FINAL_HANDOFF.md#hosted-9b-rehearsal). One base-model
+   [historical handoff](<https://github.com/haoranxu-research/elt-bench-tinker-rlvr/blob/7924ddaa1e1137c019eed4b913ffb73330068626/FINAL_HANDOFF.md#hosted-9b-rehearsal>). One base-model
    sampling session, 20 turns maximum, local DuckDB execution, and
    pinned grading of the model's explicit submission. Check actual
    file writes, SQL execution feedback and terminal submission.
