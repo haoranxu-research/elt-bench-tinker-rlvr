@@ -123,3 +123,36 @@ After the administrator check and separate authorization, use the
 [final live command](../FINAL_HANDOFF.md#final-live-command) in a new run
 directory. The native agent generates its own SQL. Keep the recorded local
 SQL and grading assets outside the native model workspace.
+
+## Authorized native attempt 004 preflight
+
+On November 22, 2026, the native metadata and Tinker preflights were
+rerun for the authorized attempt. The native command was the handoff
+command with --preflight-only in place of --allow-paid and
+--allow-warehouse, and a separate output directory. It confirmed the
+40-turn and 60-tool profile, the 2,400-second action window, the
+1,500-second grading window, and the USD 0.23758848 uncached token
+estimate. Tinker created no sampling session.
+
+The recent Airbyte counts and cleanup were rechecked against the saved
+six-job receipt. The same local services remained running, both LocalStack
+keys were present, the pinned evaluator checkout was unchanged, and the
+worker still allowed one attempt per job. The fresh RSA metadata check
+showed an X-Small suspended warehouse with auto-resume, 60-second
+auto-suspend, and the required service-role grants.
+
+A focused run passed 12 deadline, grading, reward, and cleanup cases.
+The full suite initially passed 119 tests and failed the default-model
+renderer test because the 35B-only cache did not contain its tokenizer.
+With the existing default tokenizer cache restored, the full offline
+suite passed 120 tests in 38.82 seconds. Both runs kept network downloads
+disabled and enabled the real renderer and local Terraform provider.
+Private preflight and test logs are under runs/books-offline-readiness/
+with the final-004 prefix.
+
+The service-role SHOW RESOURCE MONITORS query returned no rows. Chrome
+reached the Snowsight account sign-in screen, so the administrator
+reading was unavailable. Attempt 004 stayed unlaunched pending the
+active trial balance, current warehouse attachment, and at least 1.30
+credits of verified headroom to immediate suspension. No Snowflake
+warehouse compute or Tinker sampling was started for attempt 004.
