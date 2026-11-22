@@ -388,6 +388,20 @@ class SnowflakeBooksBackend:
                     "Use 70% as a multiplier of 0.70 on the average across all books.")
         return None
 
+    def publisher_rate_check(self, sources: dict[str, list[str]]) -> str | None:
+        if "publisher_id" not in sources.get("book", ()):
+            return None
+        schema = f"{self.database}.BOOKS."
+        (missing,), = self._lookup_rows(
+            f"SELECT COUNT(*) FROM {schema}publishers o WHERE o.per_japanese_books IS NULL "
+            f"AND EXISTS (SELECT 1 FROM {schema}book b WHERE b.publisher_id = o.publisher_id)"
+        )
+        if missing:
+            return (f"{missing} publishers with books have an undefined Japanese-book percentage. "
+                    "Keep all books in the denominator. A publisher with books and no Japanese books "
+                    "has a zero numerator, while a publisher without books has no denominator.")
+        return None
+
     def author_page_check(self, sources: dict[str, list[str]]) -> str | None:
         required = {"book": {"book_id", "num_pages"}, "book_author": {"author_id", "book_id"}}
         if not all(columns <= set(sources.get(table, ())) for table, columns in required.items()):

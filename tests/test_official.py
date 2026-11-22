@@ -697,6 +697,24 @@ def test_author_rate_detects_bad_text_date_parsing():
         assert backend.author_publication_check(sources) is None
 
 
+def test_public_publisher_rate_check_distinguishes_zero_numerator_from_missing_denominator():
+    import duckdb
+    from elt_rl.official import SnowflakeBooksBackend
+
+    backend = object.__new__(SnowflakeBooksBackend)
+    backend.database = "memory"
+    with duckdb.connect() as db:
+        db.execute("CREATE SCHEMA books")
+        db.execute("CREATE TABLE books.book AS SELECT * FROM (VALUES (1), (1), (2)) v(publisher_id)")
+        db.execute("CREATE TABLE books.publishers AS SELECT * FROM "
+                   "(VALUES (1, NULL), (2, 100), (3, NULL)) v(publisher_id, per_japanese_books)")
+        backend._lookup_rows = lambda query: db.execute(query).fetchall()
+        sources = {"book": ["publisher_id"]}
+        assert backend.publisher_rate_check(sources).startswith("1 publishers with books")
+        db.execute("UPDATE books.publishers SET per_japanese_books = 0 WHERE publisher_id = 1")
+        assert backend.publisher_rate_check(sources) is None
+
+
 def test_public_warning_survives_rewrite_until_retest(tmp_path):
     from elt_rl.contracts import TaskDefinition
 

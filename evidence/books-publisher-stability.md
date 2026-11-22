@@ -103,9 +103,8 @@ estimate is **$0.23758848** at uncached prefill rates with a configured
 **$0.25** estimate limit. There is no Snowflake workload in this command.
 [Tinker pricing](https://thinkingmachines.ai/tinker/pricing/)
 
-The first rehearsal authorization was used. Run this command only
-under fresh authorization, with the existing Tinker credentials and
-cached tokenizer available:
+This command was used for the hosted recovery run described below.
+Use a new output directory for each independent attempt.
 
 ```powershell
 .\.venv\Scripts\python.exe -c 'from pathlib import Path; import sys,runpy; sys.path.append(str(Path(sys.base_prefix)/""Lib""/""site-packages"")); sys.path.insert(0,""scripts""); sys.path.append("".venv-core/Lib/site-packages""); runpy.run_path(""scripts/books_model_rehearsal.py"",run_name=""__main__"")' --hosted --books-35b-profile --model Qwen/Qwen3.6-35B-A3B --book-publication-date-text --checkout ../upstream-elt-bench --assets runs/books-assets --budget-usd 0.25 --allow-paid --out runs/books-publisher-007-hosted-recovery
@@ -116,4 +115,35 @@ in both stages plus an explicit submission of all three models.
 The prior estimated Snowflake use was 0.75–1.10 compute credits, with
 a gate of at least 1.30 verified credits before immediate suspension.
 The dedicated 5.00-credit quota at 90% gave 1.98 credits before attempt
-006. Current headroom has yet to be verified after that run.
+006.
+
+## Goal continuation and hosted recovery run
+
+The subsequent hosted 35B validation from `b501579` loaded all 15 tables
+and 84,337 rows, independently saved all three models, then explicitly
+submitted them on turn 26. It achieved Stage 1 = 1.0 and Stage 2 = 2/3.
+The trajectory received 0.7833333333333333. The publisher 70% page
+threshold matched, as did all customer and author columns. The only
+mismatch was `PER_JAPANESE_BOOKS`. The model built its percentage from
+an aggregate that omitted publishers without Japanese books. It returned
+NULL for 2,255 publishers that had a nonempty book denominator.
+
+An advisory now detects undefined Japanese-book rates for publishers
+with books, using their actual source-book rows. It explains the
+difference between a zero numerator and an undefined denominator. It
+does not read the evaluator's expected outputs. The archived action
+replay surfaced the diagnostic for all 2,255 affected publisher rows.
+The focused zero-numerator regression and all 130 offline tests
+passed. The hosted run used
+7,979 sampled, 138,112 cached prefill, and 18,709 uncached prefill
+tokens. Their published-rate estimate is $0.031501095. The artifacts
+are under `runs/books-publisher-007-hosted-recovery/`.
+
+The project administrator console showed 3.29 Snowflake credits used,
+about $392 in trial allowance, and the dedicated monitor attached
+only to `ELT_BOOKS_WH`. The dedicated quota was raised from 5.00 to 6.00,
+retaining 90% immediate suspension and leaving about 2.11 compute
+credits before that threshold at the time of verification. Tinker
+showed $8.99 prepaid with auto-reload off. Native execution waits for
+an independent model-driven local full score and the fresh source
+preflight. No Snowflake workload was started for this continuation.

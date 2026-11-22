@@ -589,6 +589,11 @@ class ELTEpisodeState:
                                 and "70% of the average number of pages of all books"
                                 in self.task.sections.get("publishers", "").lower()):
                             problem = self.backend.publisher_page_check(self.warehouse_columns)
+                        if (filename == "publishers.sql" and hasattr(self.backend, "publisher_rate_check")
+                                and "percentage of books published by the publisher that are written in japanese"
+                                in self.task.sections.get("publishers", "").lower()):
+                            rate_problem = self.backend.publisher_rate_check(self.warehouse_columns)
+                            problem = " ".join(note for note in (problem, rate_problem) if note) or None
                         if (filename == "authors.sql" and hasattr(self.backend, "author_page_check")
                                 and "average total pages of all authors" in self.task.sections.get("authors", "").lower()):
                             problem = self.backend.author_page_check(self.warehouse_columns)
