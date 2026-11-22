@@ -45,6 +45,54 @@ The ignored local evidence is under `runs/`:
 - `books-offline-readiness/native-007-offline-tests.txt` has the pytest output.
 - `books-publisher-007-hosted-preflight/manifest.json` records the local-only hosted candidate configuration and budget.
 
+## Authorized hosted validation
+
+The prepared command ran once from commit `7365284`. Tinker returned
+six responses. The first five dispatched read-only task calls. On turn
+six, the model asked for the MongoDB task section but closed the function
+tag with `</function</arg>`. The pinned renderer recognized the end of
+the message and rejected the malformed XML. The environment then ended
+the episode with `parse_error`. The model never saved a load manifest
+or wrote SQL. Neither evaluation stage ran, and the trajectory reward
+was **0.0**.
+
+| Usage | Observed |
+| --- | ---: |
+| Sampled tokens | 152 |
+| Cached prefill tokens | 11,648 |
+| Uncached prefill tokens | 3,581 |
+| Published-rate estimate from the metered tokens | $0.00286269 |
+| Snowflake compute | 0 |
+
+The billing lookup had no session rows posted at the time of the check.
+The provenance audit verified all five dispatched calls against the
+sampled tokens and found aligned sampled tokens and log probabilities.
+Original prompts, actions, tool receipts, and audits are under
+`runs/books-publisher-007-hosted-validation/`.
+
+## Offline repair and verification
+
+The Books working phase now allows one recovery from a completely
+malformed tool call when the message boundary is intact and working
+budget remains. It rebuilds the prompt from the actual episode state and
+requests one correctly formatted next action. The bad call has no side
+effects. Its sampled tokens and turn still count. A repeated malformed
+call terminates, and when the working budget ends with tested files the
+final turn remains available for an explicit submission.
+
+Replaying all six exact hosted token receipts with the pinned 35B
+renderer produced a 2,968-token recovery prompt pointing to the next
+step, writing the load manifest. The replay wrote no files, retained
+the 54-token submission reserve, and terminated when the bad action
+was repeated. Regression tests also exercised a valid continuation
+and a successful explicit submission after a malformed last working
+action. No new model sampling was used for the repair verification.
+The full offline suite passed 129 tests. The earlier full-score Qwen
+action trace also replayed through the repaired workflow with Stage 1,
+Stage 2, and reward all at 1.0. Logs are in
+`runs/books-offline-readiness/native-007-recovery-final-tests.txt` and
+`runs/books-offline-readiness/native-007-post-recovery-replay/`.
+
 ## Next bounded validation
 
 The prepared run is one Tinker-hosted `Qwen/Qwen3.6-35B-A3B` rehearsal
@@ -55,11 +103,12 @@ estimate is **$0.23758848** at uncached prefill rates with a configured
 **$0.25** estimate limit. There is no Snowflake workload in this command.
 [Tinker pricing](https://thinkingmachines.ai/tinker/pricing/)
 
-Run from the repository after authorization, with the existing Tinker
-credentials and cached tokenizer available:
+The first rehearsal authorization was used. Run this command only
+under fresh authorization, with the existing Tinker credentials and
+cached tokenizer available:
 
 ```powershell
-.\.venv\Scripts\python.exe -c 'from pathlib import Path; import sys,runpy; sys.path.append(str(Path(sys.base_prefix)/""Lib""/""site-packages"")); sys.path.insert(0,""scripts""); sys.path.append("".venv-core/Lib/site-packages""); runpy.run_path(""scripts/books_model_rehearsal.py"",run_name=""__main__"")' --hosted --books-35b-profile --model Qwen/Qwen3.6-35B-A3B --book-publication-date-text --checkout ../upstream-elt-bench --assets runs/books-assets --budget-usd 0.25 --allow-paid --out runs/books-publisher-007-hosted-validation
+.\.venv\Scripts\python.exe -c 'from pathlib import Path; import sys,runpy; sys.path.append(str(Path(sys.base_prefix)/""Lib""/""site-packages"")); sys.path.insert(0,""scripts""); sys.path.append("".venv-core/Lib/site-packages""); runpy.run_path(""scripts/books_model_rehearsal.py"",run_name=""__main__"")' --hosted --books-35b-profile --model Qwen/Qwen3.6-35B-A3B --book-publication-date-text --checkout ../upstream-elt-bench --assets runs/books-assets --budget-usd 0.25 --allow-paid --out runs/books-publisher-007-hosted-recovery
 ```
 
 A later native rollout requires a fresh model-driven local score of 1.0

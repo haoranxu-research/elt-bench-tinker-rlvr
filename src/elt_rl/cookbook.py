@@ -188,14 +188,14 @@ class ELTMessageEnv(AgentToolMessageEnv):
             "Output the tool call without prose."
         )})
         self.history = messages
+        self.finished = False
         return self.history
 
-    def compact(self, *, interrupted: bool = False) -> list[Message]:
+    def compact(self, *, recovery_notice: str | None = None) -> list[Message]:
         state = ("Working state after context compaction. Continue from this state without restarting:\n"
                  + self._episode.compact_state(self.turn))
-        if interrupted:
-            state += ("\nThe interrupted action made no changes. Respond with a single tool call. "
-                      + self._episode.recovery_action())
+        if recovery_notice:
+            state += "\n" + recovery_notice + " Respond with a single tool call. " + self._episode.recovery_action()
         else:
             state += "\nNext pending action: " + self._episode.recovery_action()
         # The final initial message asks for the first action of a new episode.
@@ -233,6 +233,7 @@ class BooksTokenEnv(ELTTokenEnv):
         self.reserve = reserve
         self.final_renderer = finalization_renderer(renderer)
         self.pending_recovery_action: str | None = None
+        self._used_malformed_call_recovery = False
         self.tokens_spent = 0
         self.turns_used = 0
 
@@ -276,33 +277,44 @@ class BooksTokenEnv(ELTTokenEnv):
             return result
         interrupted = (extra or {}).get("stop_reason") == "length"
         context_full = bool(result.metrics.get("context_overflow"))
-        if result.episode_done and not (interrupted or context_full):
+        malformed_call = bool(result.metrics.get("stop/parse_error") and result.logs.get("parse_errors")
+                              and not self._used_malformed_call_recovery)
+        if result.episode_done and not (interrupted or context_full or malformed_call):
             return result
         last_turn = self.turns_used + 1 >= self.rollout_limits.max_turns
         last_call = self.books_messages.remaining_tool_calls <= 1
         low_tokens = self.sampled_left <= self.reserve + 1
         working_left = self.sampled_left - self.reserve
-        recover_interrupted = (interrupted and not (last_turn or last_call)
-                               and working_left >= min(512, self.rollout_limits.max_turn_tokens))
-        if recover_interrupted:
-            self.episode.latest_error = "The previous action was incomplete. It was not executed. Use a shorter tool call."
+        recovery_notice = None
+        if (interrupted or malformed_call) and not (last_turn or last_call) and (
+            working_left >= min(512, self.rollout_limits.max_turn_tokens)
+        ):
+            recovery_notice = ("The interrupted action made no changes." if interrupted else
+                               "The malformed tool call was not executed. Use valid tool syntax and arguments.")
+            if interrupted:
+                self.episode.latest_error = "The previous action was incomplete. It was not executed. Use a shorter tool call."
             self.books_messages.turn = self.turns_used
             self.pending_recovery_action = self.episode.recovery_action()
         desired = min(working_left, self.rollout_limits.max_turn_tokens)
         if not (last_turn or last_call or low_tokens) and (
-            context_full or recover_interrupted
+            context_full or recovery_notice
             or (not result.episode_done and self.context_room(result.next_observation.length) < desired)
         ):
             previous_length = result.next_observation.length
             previous_history = self.books_messages.history
-            messages = self.books_messages.compact(interrupted=recover_interrupted)
+            messages = self.books_messages.compact(recovery_notice=recovery_notice)
             compact = await self._render_in_thread(messages)
-            if self.context_room(compact.length) >= 2 and (context_full or recover_interrupted or compact.length < previous_length):
+            if self.context_room(compact.length) >= 2 and (context_full or recovery_notice or compact.length < previous_length):
                 self._finished = False
+                self.books_messages.finished = False
                 metrics = {key: value for key, value in result.metrics.items() if not key.startswith("stop/")}
                 metrics.update(context_compacted=1, compact_prompt_tokens=compact.length)
-                if recover_interrupted:
-                    metrics["interrupted_action_recovery"] = 1
+                if recovery_notice:
+                    if interrupted:
+                        metrics["interrupted_action_recovery"] = 1
+                    else:
+                        self._used_malformed_call_recovery = True
+                        metrics["malformed_call_recovery"] = 1
                 return types.StepResult(0.0, False, compact, self._base_stop_condition, metrics=metrics, logs=result.logs)
             self.books_messages.history = previous_history
         if not (interrupted or context_full or last_turn or last_call or low_tokens):

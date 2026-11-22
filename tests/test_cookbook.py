@@ -599,6 +599,67 @@ def test_cookbook_rollouts_produce_real_advantages_and_datums(tmp_path):
     asyncio.run(run())
 
 
+@pytest.mark.parametrize("outcome", ["resume", "repeat_malformed", "finalize"])
+def test_books_recovers_archived_malformed_qwen_tool_call_once(tmp_path, outcome):
+    if os.environ.get("ELT_TEST_REAL_RENDERER") != "1":
+        pytest.skip("set ELT_TEST_REAL_RENDERER=1 with the pinned public tokenizer cached")
+    from elt_rl.cookbook import submission_call_tokens
+    from elt_rl.rendering import make_renderer
+    from elt_rl.settings import DEFAULT_MODEL, DEFAULT_RENDERER
+
+    async def run():
+        renderer = make_renderer(DEFAULT_MODEL, DEFAULT_RENDERER, offline=True)
+        archived = renderer.tokenizer.encode(
+            "<tool_call>\n<function=read_task_section>\n<parameter=section>\nmongodb\n</parameter>\n"
+            "</function</arg>\n</tool_call><|im_end|>", add_special_tokens=False)
+        parsed, termination = renderer.parse_response(archived)
+        assert termination.is_clean and parsed.get("unparsed_tool_calls") and not parsed.get("tool_calls")
+        task = replace(local_task(), task_id="books", partial_transforms=True)
+        reserve = 2 * len(submission_call_tokens(renderer, "complete"))
+        actions = [json.loads(line) for line in TRACE.read_text(encoding="utf-8").splitlines()]
+        actions[-1]["arguments"]["mode"] = "complete"
+        config = EpisodeConfig(tmp_path, max_turns=len(actions) + 1) if outcome == "finalize" else EpisodeConfig(tmp_path)
+        builder = ELTGroupBuilder(config, renderer, 1, task_factory=lambda: task,
+                                  submission_reserve=reserve)
+        env, = await builder.make_envs()
+        episode, = builder.episodes
+
+        async def dispatch(action):
+            body = "".join(f"<parameter={key}>\n{value}\n</parameter>\n"
+                           for key, value in action["arguments"].items())
+            call = f"<tool_call>\n<function={action['tool']}>\n{body}</function>\n</tool_call><|im_end|>"
+            return await env.step(renderer.tokenizer.encode(call, add_special_tokens=False))
+
+        try:
+            await env.initial_observation()
+            for action in actions[:-1] if outcome == "finalize" else actions[:1]:
+                await dispatch(action)
+            step = await env.step(archived, extra={"stop_reason": "stop"})
+            prompt = renderer.tokenizer.decode(step.next_observation.to_ints())
+            if outcome == "finalize":
+                assert "Final turn. Current tested files: customer_totals.sql, order_totals.sql." in prompt
+                assert "malformed_call_recovery" not in step.metrics
+                terminal = await env.step(submission_call_tokens(renderer, "complete"))
+                assert terminal.episode_done and terminal.reward == 1.0
+                return
+            assert step.metrics["malformed_call_recovery"] == 1 and not step.episode_done
+            assert "The malformed tool call was not executed." in prompt
+            assert "Use write_pipeline_file to save the load manifest." in prompt
+            assert not (episode.artifact_dir / task.load_artifacts[0]).exists()
+            assert env.tokens_spent >= len(archived) and env.turns_used == 2
+            if outcome == "repeat_malformed":
+                terminal = await env.step(archived, extra={"stop_reason": "stop"})
+                assert terminal.episode_done and terminal.reward == 0 and terminal.metrics["stop/parse_error"] == 1
+            else:
+                for action in actions[1:]:
+                    step = await dispatch(action)
+                assert step.episode_done and step.reward == 1.0
+        finally:
+            await builder.cleanup()
+
+    asyncio.run(run())
+
+
 def test_actual_qwen_renderer_tool_turns_offline(tmp_path):
     if os.environ.get("ELT_TEST_REAL_RENDERER") != "1":
         pytest.skip("set ELT_TEST_REAL_RENDERER=1 with the pinned public tokenizer cached")

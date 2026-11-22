@@ -102,8 +102,10 @@ and checked preservation of tested SQL through compaction and submission.
 A local model repaired the archived threshold expression in a focused
 test. A fresh full local-model run stopped at the load manifest. An
 archived Qwen replay preserved all three SQL files and earned 1.0 on
-both stages. Fresh hosted full-score validation is the gate for another
-native attempt. [Evidence and next local rehearsal command](evidence/books-publisher-stability.md)
+both stages. The next hosted attempt stopped on malformed tool syntax
+before loading. The offline repair now provides one bounded recovery
+from that error. Fresh hosted full-score validation is the gate for
+another native attempt. [Evidence and next local rehearsal command](evidence/books-publisher-stability.md)
 
 ## Final live command
 
