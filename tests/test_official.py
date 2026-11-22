@@ -653,7 +653,7 @@ def test_public_publisher_page_check_flags_zero_above_global_threshold():
         backend._lookup_rows = lambda query: db.execute(query).fetchall()
         catalog = {"book": ["publisher_id", "num_pages"]}
         warning = backend.publisher_page_check(catalog)
-        assert warning.startswith("1 publishers counted zero") and "70% is a fraction" in warning
+        assert warning.startswith("1 publishers counted zero") and "multiplier of 0.70" in warning
         db.execute("UPDATE books.publishers SET num_books_pages_greater_than_70_per_of_avg = 1 WHERE publisher_id=2")
         assert backend.publisher_page_check(catalog) is None
 
@@ -706,6 +706,8 @@ def test_public_warning_survives_rewrite_until_retest(tmp_path):
         def execute(self, stage, artifacts):
             if "customers.sql" in artifacts:
                 self.repaired = "NULL" in artifacts["customers.sql"]
+            if len(artifacts) == 3:
+                submitted.append(artifacts.copy())
             return "executed"
 
         def customer_rate_check(self, _columns):
@@ -714,8 +716,9 @@ def test_public_warning_survives_rewrite_until_retest(tmp_path):
         def close(self):
             pass
 
+    submitted = []
     task = TaskDefinition("books", "task", ("load.json",), ("publishers.sql", "customers.sql", "authors.sql"),
-                          lambda *_: Backend(), lambda _: Grade(), partial_transforms=True,
+                          lambda *_: Backend(), lambda _: Grade(1, 1, True, True), partial_transforms=True,
                           sections={"customers": "percentage of orders shipped internationally"},
                           output_columns={"customers.sql": ("rate",)})
     with ELTEpisodeState(task, EpisodeConfig(tmp_path)) as episode:
@@ -741,6 +744,14 @@ def test_public_warning_survives_rewrite_until_retest(tmp_path):
         run("execute_pipeline", 11, stage="transform", file="customers.sql")
         assert "Undefined customer rates" not in episode.compact_state(11)
         assert episode.tested_files == ("publishers.sql", "customers.sql", "authors.sql")
+        assert "Current tested files: publishers.sql, customers.sql, authors.sql" in episode.compact_state(11)
+        episode.finalizing = True
+        assert episode.dispatch("submit_pipeline", {"mode": "complete"}, turn=12).submitted
+        assert submitted == [{
+            "publishers.sql": "SELECT * FROM publisher",
+            "customers.sql": "SELECT NULL AS rate FROM customer",
+            "authors.sql": "SELECT * FROM author",
+        }]
 
 
 def test_public_customer_rate_check_uses_observed_shipping_and_percentage_range():
@@ -754,7 +765,7 @@ def test_public_customer_rate_check_uses_observed_shipping_and_percentage_range(
         db.execute("CREATE TABLE books.shipping_method AS SELECT * FROM (VALUES (1, 'Standard'), (2, 'International')) "
                    "v(method_id, method_name)")
         db.execute("CREATE TABLE books.customers AS SELECT * FROM "
-                   "(VALUES (10, 100, 120, '1'), (20, 100, 100, 'International'), (30, NULL, 0, NULL), "
+                   "(VALUES (10, 100, 120, '1'), (20, 1, 100, 'International'), (30, NULL, 0, NULL), "
                    "(40, 0, 0, NULL)) "
                    "v(customer_id, per_order_shipped_internationally, per_books_over_13, preferred_shipping_method)")
         backend._lookup_rows = lambda query: db.execute(query).fetchall()
@@ -762,6 +773,7 @@ def test_public_customer_rate_check_uses_observed_shipping_and_percentage_range(
                    "shipping_method": ["method_id", "method_name"]}
         issue = backend.customer_rate_check(sources)
         assert "only non-International shipping methods" in issue and "outside 0 to 100" in issue
+        assert "orders all use the International shipping method" in issue and "ratio of 1 is 100%" in issue
         assert "not observed shipping method names" in issue
         assert "without orders have a defined purchase or shipping percentage" in issue
         db.execute("UPDATE books.customers SET per_order_shipped_internationally = 0, per_books_over_13 = 100, "
@@ -769,6 +781,7 @@ def test_public_customer_rate_check_uses_observed_shipping_and_percentage_range(
                    "WHERE customer_id = 10")
         db.execute("UPDATE books.customers SET per_order_shipped_internationally = NULL, per_books_over_13 = NULL "
                    "WHERE customer_id = 40")
+        db.execute("UPDATE books.customers SET per_order_shipped_internationally = 100 WHERE customer_id = 20")
         assert backend.customer_rate_check(sources) is None
 
 

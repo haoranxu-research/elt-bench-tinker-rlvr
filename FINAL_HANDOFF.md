@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | Credential-free, multi-turn ELT | The SQLite trace repaired a failed transform, submitted from a later turn, and earned 1.0 on a fresh replay. The test suite covers faulty input, failed transforms, partial and unsubmitted scores, and cleanup. | Complete |
 | Hosted agent submission with pinned books grading | Qwen3.6-35B-A3B independently wrote, executed, and submitted all three outputs on DuckDB. All 15 tables and 84,337 rows were present. Stage 1 = 1.0, Stage 2 = 1.0, reward = 1.0. | Local target complete |
-| Credentialed official task | Qwen3.6-35B-A3B loaded all 84,337 rows and submitted two tested models. The best native result was Stage 1 = 1.0, Stage 2 = 2/3. The native grader and trajectory both returned 0.783333. An offline audit used the recorded return and sampled actions to verify training datums. | Full native correctness pending. |
+| Credentialed official task | In attempt 006, Qwen3.6-35B-A3B loaded all 84,337 rows and submitted all three tested models. The native result was Stage 1 = 1.0, Stage 2 = 2/3. The native grader and trajectory both returned 0.783333. An offline audit used the recorded return and sampled actions to verify training datums. | Full native correctness pending. |
 | Real Tinker RL update | A previous pilot completed one optimizer step from execution-derived SQLite rewards and verified a changed probe and matching checkpoint metadata. | Complete |
 | Submission materials | The repository records the current results and reproduction commands. | Final baseline handoff pending |
 
@@ -96,6 +96,14 @@ customer outputs matched. The publisher page-threshold count was the
 only mismatch. Native and recorded trajectory rewards were 0.783333.
 The host verified cleanup and suspended warehouse state.
 [Native result and offline publisher check](evidence/books-snowflake-006.md)
+
+The follow-up made the publisher's public percentage feedback explicit
+and checked preservation of tested SQL through compaction and submission.
+A local model repaired the archived threshold expression in a focused
+test. A fresh full local-model run stopped at the load manifest. An
+archived Qwen replay preserved all three SQL files and earned 1.0 on
+both stages. Fresh hosted full-score validation is the gate for another
+native attempt. [Evidence and next local rehearsal command](evidence/books-publisher-stability.md)
 
 ## Final live command
 

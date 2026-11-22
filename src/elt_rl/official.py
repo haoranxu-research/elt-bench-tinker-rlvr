@@ -385,7 +385,7 @@ class SnowflakeBooksBackend:
         )
         if false_zeros:
             return (f"{false_zeros} publishers counted zero books despite having a book above the public page threshold. "
-                    "Check that 70% is a fraction of the average across all books.")
+                    "Use 70% as a multiplier of 0.70 on the average across all books.")
         return None
 
     def author_page_check(self, sources: dict[str, list[str]]) -> str | None:
@@ -422,15 +422,20 @@ class SnowflakeBooksBackend:
         if not all(columns <= set(sources.get(table, ())) for table, columns in required.items()):
             return None
         schema = f"{self.database}.BOOKS."
-        (shipping, book_range, invalid_labels, defined_rates), = self._lookup_rows(
-            "WITH domestic_only AS ("
-            f"SELECT co.customer_id FROM {schema}cust_order co LEFT JOIN {schema}shipping_method sm "
+        (domestic_rate, international_rate, book_range, invalid_labels, defined_rates), = self._lookup_rows(
+            "WITH shipping_totals AS ("
+            "SELECT co.customer_id, COUNT(*) AS total_orders, "
+            "SUM(CASE WHEN UPPER(sm.method_name) = 'INTERNATIONAL' THEN 1 ELSE 0 END) AS international_orders "
+            f"FROM {schema}cust_order co LEFT JOIN {schema}shipping_method sm "
             "ON sm.method_id = co.shipping_method_id GROUP BY co.customer_id "
-            "HAVING COUNT(*) = COUNT(sm.method_name) "
-            "AND SUM(CASE WHEN UPPER(sm.method_name) = 'INTERNATIONAL' THEN 1 ELSE 0 END) = 0"
+            "HAVING COUNT(*) = COUNT(sm.method_name)"
             ") SELECT "
-            f"(SELECT COUNT(*) FROM {schema}customers o JOIN domestic_only d ON o.customer_id = d.customer_id "
-            "WHERE COALESCE(TRY_CAST(CAST(o.per_order_shipped_internationally AS VARCHAR) AS DOUBLE), -1) <> 0), "
+            f"(SELECT COUNT(*) FROM {schema}customers o JOIN shipping_totals s ON o.customer_id = s.customer_id "
+            "WHERE s.international_orders = 0 "
+            "AND COALESCE(TRY_CAST(CAST(o.per_order_shipped_internationally AS VARCHAR) AS DOUBLE), -1) <> 0), "
+            f"(SELECT COUNT(*) FROM {schema}customers o JOIN shipping_totals s ON o.customer_id = s.customer_id "
+            "WHERE s.international_orders = s.total_orders AND ABS("
+            "COALESCE(TRY_CAST(CAST(o.per_order_shipped_internationally AS VARCHAR) AS DOUBLE), -1) - 100) > 0.000001), "
             f"(SELECT COUNT(*) FROM {schema}customers WHERE "
             "TRY_CAST(CAST(per_books_over_13 AS VARCHAR) AS DOUBLE) NOT BETWEEN 0 AND 100.000001), "
             f"(SELECT COUNT(*) FROM {schema}customers o WHERE o.preferred_shipping_method IS NOT NULL "
@@ -441,9 +446,12 @@ class SnowflakeBooksBackend:
             f"AND NOT EXISTS (SELECT 1 FROM {schema}cust_order co WHERE co.customer_id = o.customer_id))"
         )
         notes = []
-        if shipping:
-            notes.append(f"{shipping} customers whose orders use only non-International shipping methods "
+        if domestic_rate:
+            notes.append(f"{domestic_rate} customers whose orders use only non-International shipping methods "
                          "do not have a zero international rate. Check the shipping-method label and denominator.")
+        if international_rate:
+            notes.append(f"{international_rate} customers whose orders all use the International shipping method "
+                         "do not have a rate of 100%. Return percentage points, so a ratio of 1 is 100%.")
         if book_range:
             notes.append(f"{book_range} customer book-price percentages fall outside 0 to 100. "
                          "Use the same grain in both counts. Repeat purchases of a title are separate ordered books.")
