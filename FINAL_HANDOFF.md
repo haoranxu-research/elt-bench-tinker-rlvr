@@ -80,8 +80,8 @@ tokens, and 8,192 sampled tokens. Measured usage implies **USD
 
 The corrected loader passed a fresh hosted 35B validation on DuckDB
 with TEXT dates. Both evaluator stages and the trajectory reward
-were 1.0. The authorized native attempt needs a current administrator
-credit reading before launch.
+were 1.0. The refreshed administrator reading showed 0.92 credits before
+immediate suspension, below the 1.30-credit launch requirement.
 [Current evidence and native launch command](evidence/books-source-recovery.md#authorized-hosted-35b-validation-result)
 
 ## Final live command

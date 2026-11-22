@@ -135,6 +135,11 @@ read-only check. The manifest, native-format grader output on DuckDB,
 traces, and audits are preserved privately under
 runs/books-post004-hosted-validation.
 
-The local launch gate passed. The authorized native attempt waits on
-current administrator evidence of an active trial and at least
-1.30 credits before immediate warehouse suspension.
+The local launch gate passed. A refreshed Snowsight administrator
+check showed an active trial with about USD 394 remaining. The
+dedicated monitor was attached to ELT_BOOKS_WH and showed 1.78 used
+out of 3.00 credits. Immediate suspension at 90% leaves approximately
+0.92 credits. The native rollout requires 1.30 credits of verified
+headroom, so it stayed unlaunched. The 0.45-credit difference from
+the rounded pre-004 reading is a monitor delta, which can include
+cloud services. It is not an invoice or a compute-only measurement.
