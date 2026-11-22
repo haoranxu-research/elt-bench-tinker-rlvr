@@ -100,8 +100,9 @@ BOOKS_INSTRUCTION = (
     "that file with execute_pipeline(stage=transform, file=filename). Rewrite the named file when it fails. "
     "Only write_pipeline_file accepts SQL text. Follow the remaining budget and tested files in tool feedback. "
     "Use inspect_values to check source formats instead of replacing a full draft with a diagnostic query. "
-    "Get at least one execution result for every required model before rereading or reviewing "
-    "already tested SQL. Keep tested files unless a public check identifies a problem. Do not revise a saved "
+    "Use the schema and public requirements already in the latest load or compaction observation. "
+    "Inspect a specific table only to resolve a missing fact. Get an execution result for every required model "
+    "before rereading tested files. Keep tested files unless a public check identifies a problem. Do not revise a saved "
     "draft again until you have tested it. You can call "
     "write_pipeline_file and then execute_pipeline for that file in the same turn. "
     "Review the public requirements and "
@@ -588,6 +589,8 @@ class ELTEpisodeState:
                             feedback += f"\n{filename}: Public data check failed. {problem}"
                         for note in public_sql_review(sql, self.task.sections.get(filename.removesuffix(".sql"), "")):
                             feedback += f"\n{filename}: {note}"
+                if self.tested_files != self.task.transform_artifacts or self._failed_public_checks:
+                    feedback += "\nNext pending action: " + self.recovery_action()
                 return feedback
             return result
         raise PipelineError("stage must be load or transform")

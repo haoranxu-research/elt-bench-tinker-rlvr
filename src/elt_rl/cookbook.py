@@ -196,7 +196,7 @@ class ELTMessageEnv(AgentToolMessageEnv):
         if interrupted:
             state += ("\nThe interrupted action made no changes. Respond with a single tool call. "
                       + self._episode.recovery_action())
-        elif self._episode.tested_files != self._episode.task.transform_artifacts:
+        else:
             state += "\nNext pending action: " + self._episode.recovery_action()
         # The final initial message asks for the first action of a new episode.
         self.history = [*self.initial_messages[:-1], {"role": "user", "content": state}]
