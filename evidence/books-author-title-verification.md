@@ -65,3 +65,36 @@ No sampling or warehouse compute was started for this proposal.
 # Run only after the full local scores and Snowflake resource gates pass.
 .\.venv\Scripts\python.exe -c 'from pathlib import Path; import sys; sys.path.append(str(Path(sys.base_prefix)/""Lib""/""site-packages"")); from elt_rl.run import main; raise SystemExit(main())' official-rollout --books-35b-profile --books-max-turns 40 --allow-paid --allow-warehouse --rollout-seconds 2400 --grading-seconds 1500 --budget-usd 0.25 --model Qwen/Qwen3.6-35B-A3B --renderer qwen3_5_disable_thinking --out runs/books-official-qwen35b-006
 ~~~
+
+## Authorized 35B rehearsal result
+
+The hosted command above completed from commit 79b592a using the local
+DuckDB TEXT-date representation. The model loaded the complete source
+set, independently wrote three SQL files, and explicitly submitted all
+three on turn 29. Both pinned stages, the grade, and the trajectory
+reward were 1.0. All 38 dispatched calls and saved file bytes matched
+the sampled tool calls, and the offline Cookbook audit verified the
+trajectory reward against the original sampled tokens and log probabilities.
+
+The targeted host-only audit executed both the first and submitted
+author drafts. Both retained all 9,235 author rows and returned NULL
+for all 3,890 authors with no priced sale. Neither omitted an author
+nor returned NULL for an author with a priced sale. The new warning was
+never needed for this field. The model fixed a different public warning
+on the 1992 percentage. No diagnostic SQL, reference SQL or expected
+output was supplied to the model. The evidence demonstrates correct
+first-pass title handling on this local run.
+
+The run used 8,257 sampled tokens, 151,040 cached prefill tokens and
+21,229 uncached prefill tokens. The published-rate estimate is
+USD 0.034169745. No provider session rows had posted when checked. The
+private manifests, prompts, SQL and audits are in
+runs/books-author-title-hosted-validation.
+
+The official authorization remains unused. A fresh Snowsight
+administrator reading showed the active trial, the dedicated warehouse
+attachment, 2.52 used credits, a 4.00-credit quota, and immediate suspension
+at 90%. Effective headroom is 1.08 credits, below the 1.30-credit gate.
+The warehouse metadata verified X-Small, suspended, and 60-second
+auto-suspend. The native run was not started. A dedicated quota of 4.30
+credits would leave about 1.35 credits at the same usage and threshold.
