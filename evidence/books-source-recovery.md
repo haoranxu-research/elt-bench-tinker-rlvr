@@ -111,3 +111,30 @@ budgets. No paid run was started during this follow-up.
 Private artifacts for this follow-up are under runs/books-offline-readiness/
 with the post-004 prefix. The official evaluator and reward formula are
 unchanged. The full native milestone remains open.
+
+## Authorized hosted 35B validation result
+
+The hosted command above completed on November 22, 2026 using commit
+ce6f45b and the TEXT-date DuckDB mirror. It loaded all 15 tables and
+84,337 rows, independently wrote and executed all three SQL files,
+and repaired an authors.sql binder error. The model explicitly
+submitted publishers.sql, customers.sql, and authors.sql on turn 33.
+The pinned grader confirmed all three outputs. Stage 1, Stage 2,
+the evaluation reward, and the terminal trajectory reward were 1.0.
+
+A provenance audit matched all 39 dispatched tool calls to generated
+calls and all saved files to model writes. All 36 eligible tool
+receipts appeared in the following prompt. The offline Cookbook
+audit propagated 1.0 into 3 aligned datums with 11,464 action tokens
+and their original log probabilities. No optimization ran.
+
+The session used 24,765 uncached prefill tokens, 164,992 cached
+prefill tokens, and 11,464 sampled tokens. The rate-based estimate
+is USD 0.04129797. Provider billing showed no session rows at the
+read-only check. The manifest, native-format grader output on DuckDB,
+traces, and audits are preserved privately under
+runs/books-post004-hosted-validation.
+
+The local launch gate passed. The authorized native attempt waits on
+current administrator evidence of an active trial and at least
+1.30 credits before immediate warehouse suspension.

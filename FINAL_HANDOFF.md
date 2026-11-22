@@ -78,9 +78,11 @@ tokens, and 8,192 sampled tokens. Measured usage implies **USD
 
 ## Next validation after attempt 004
 
-The loader now rejects incomplete manifests and has bounded connection
-recovery. Use the updated commands and cost estimates for a new, separately
-authorized validation. [Source recovery and next commands](evidence/books-source-recovery.md)
+The corrected loader passed a fresh hosted 35B validation on DuckDB
+with TEXT dates. Both evaluator stages and the trajectory reward
+were 1.0. The authorized native attempt needs a current administrator
+credit reading before launch.
+[Current evidence and native launch command](evidence/books-source-recovery.md#authorized-hosted-35b-validation-result)
 
 ## Final live command
 
