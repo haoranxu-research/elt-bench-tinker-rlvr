@@ -8,16 +8,14 @@ includes a pinned Cookbook environment adapter and a test that drives it
 with scripted token actions. The same episode interface supports an official
 Snowflake `books` rollout and a one-step Tinker LoRA command.
 
-The hosted Qwen3.6-35B-A3B agent authored and submitted all three `books`
-transformations on DuckDB. The pinned evaluators returned Stage 1 = 1.0,
-Stage 2 = 1.0 and reward = 1.0. The best credentialed Snowflake run
-graded a partial submission at Stage 1 = 1.0 and Stage 2 = 2/3.
-Its warehouse grade and trajectory reward agreed at 0.783333. Full native
-correctness remains open.
-[Local scoring evidence](evidence/books-full-baseline.md)
-[Native grading and diagnosis](evidence/books-snowflake-completion.md)
-[Latest complete native submission and diagnosis](evidence/books-snowflake-006.md)
-[Latest hosted TEXT-date full-score rehearsal](evidence/books-hosted-text-validation.md)
+The hosted Qwen3.6-35B-A3B agent independently authored, tested, and
+submitted all three official `books` transformations on Snowflake.
+Airbyte loaded all 15 tables and 84,337 rows. Both pinned evaluation stages,
+the warehouse reward, and the trajectory reward reached **1.0**. The
+run-owned databases and Airbyte objects were removed, and the warehouse
+was suspended. The earlier real Tinker LoRA update used separate SQLite
+rollouts. [Native evidence](evidence/books-snowflake-007.md) ·
+[Technical report](TECHNICAL_REPORT.md)
 
 [Implementation design](DESIGN.md) · [Phase 1 evidence](evidence/phase1.txt) ·
 [Integration evidence](evidence/integrations.txt) · [Final handoff](FINAL_HANDOFF.md) · [Live Tinker pilot](evidence/tinker-pilot.md)
@@ -294,4 +292,4 @@ data-derived pipeline scores 1.0 and the hard-coded pipeline scores 0.35
 with correct Stage 1 counts and both Stage 2 models wrong. The second CLI
 invocation exits 2. The suite adds single-value, added-row, duplicate-key,
 null, ordering, and same-warehouse repeat checks and reports the measured
-extra runtime per case. See the [results and limitations](FINAL_HANDOFF.md#e-scientific-observations).
+extra runtime per case. See the [results and limitations](evidence/changed-input-final.md).

@@ -1,5 +1,12 @@
 # Why the second official ELT-Bench books rollout stopped before grading
 
+This document preserves the historical failure reconstruction. Later
+runs exposed source connectivity, percentage semantics, and malformed
+tool-call failures. The repaired workflow achieved native Stage 1,
+Stage 2, and trajectory reward of 1.0 in attempt 007.
+[Development findings](TECHNICAL_REPORT.md) ·
+[Final native evidence](evidence/books-snowflake-007.md)
+
 See [the follow-up fix and verification](evidence/books-feedback-fix.md) for
 changes made after this investigation and replay of the archived trajectory.
 

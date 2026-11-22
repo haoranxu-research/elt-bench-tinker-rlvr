@@ -1,74 +1,36 @@
 # ELT-Bench RLVR starter implementation
 
-The recipe gives a model a stateful ELT task. It chooses sources, loads a
-warehouse, writes transformations, observes errors, repairs the pipeline
-and submits it. A fresh replay produces the warehouse state used for the
-reward. The shared episode runs against local SQLite and has an Airbyte and
-Snowflake adapter for the official `books` task.
+The project provides a stateful reinforcement learning environment for
+extraction, loading, and transformation. A model reads the public task,
+selects sources, writes SQL, executes and repairs it, and explicitly
+submits tested files. Host-side evaluation computes reward by replaying
+the submitted pipeline in a clean warehouse. The same episode interface
+supports credential-free SQLite, a DuckDB rehearsal, and official
+Airbyte-to-Snowflake execution.
 
-The credential-free example loaded both source tables, recovered from a SQL
-error, and earned a reward of 1.0. Offline tests exercised the pinned
-Cookbook with the public Qwen tokenizer and renderer. Scripted warehouse
-outcomes of 0.175 and 1.0 produced 20 aligned training datums. The pinned
-Airbyte provider validated the generated configuration, and the pinned
-official evaluator enforced its Stage 1 gate with a synthetic connector.
+**The official Books task achieved full correctness on Snowflake.**
+Qwen3.6-35B-A3B independently generated and submitted
+`publishers.sql`, `customers.sql`, and `authors.sql`. Airbyte loaded
+15 tables and 84,337 rows through six connections. The pinned evaluators
+returned Stage 1 = 1.0 and Stage 2 = 1.0. The warehouse and trajectory both
+returned 1.0. An offline audit matched 9,334 original sampled action tokens
+and their log probabilities to four training datums. Both transient
+databases and their Airbyte resources were removed, and the warehouse
+was suspended. [Official run and independent audits](evidence/books-snowflake-007.md)
 
-A controlled change to the source data kept the data-derived pipeline at
-1.0 and reduced a hard-coded pipeline from 1.0 to 0.35. The local experiment
-also checks particular row, null, ordering and repeat-execution behaviors.
+**The separate Tinker pilot completed one real LoRA optimizer update.**
+Three SQLite rollouts earned 1.0, 0.0, and 1.0. The pilot verified a
+post-update change in action log probabilities and matching checkpoint
+metadata. The evidence verifies an update on execution-derived rewards.
+It provides no estimate of model performance improvement.
+[Optimizer evidence](evidence/tinker-pilot.md)
 
-The production Tinker pilot completed one optimizer step. Three live
-rollouts earned 1.0, 0.0 and 1.0 and yielded six aligned training datums.
-The post-update forward probe measured a change in action log probabilities,
-and checkpoint metadata matched the base model and LoRA rank. This
-establishes the update on local SQLite rewards.
+**An optional changed-input check exposed fixed-fixture failures.**
+The data-derived SQLite pipeline retained a reward of 1.0. A pipeline
+with fixed answers fell from 1.0 to 0.35 under controlled input changes.
+The extra replay took about 64 milliseconds for that case. These are
+synthetic, host-only results separate from the official score.
+[Robustness results](evidence/changed-input-final.md)
 
-In the November 21 credentialed `books` attempt, the Tinker-sampled agent selected
-all 15 official streams and observed all 84,337 expected rows in Snowflake.
-Airbyte completed six syncs with one attempt each. The agent's SQL failed
-validation and execution, and the episode ended unsubmitted with reward 0.
-Neither official evaluation stage ran against Snowflake. In an independent
-earlier check, the host ran both pinned evaluators using staged inputs and DuckDB transport.
-The full reference matched all three output models. A separate check with
-one absent model received Stage 2 credit for two of three outputs.
-
-The final interaction workflow separates write, execute and submit,
-identifies SQL errors by file, and supports explicit partial submission
-of tested artifacts. The follow-up preserves completed files across
-batch failures and shows which files can be submitted before the budget
-expires. The pinned grader and reward weights are unchanged. The
-earlier November 21 run's database and Airbyte resources were removed.
-The hosted Qwen3.6-35B-A3B agent loaded the 15 pinned `books` tables
-(84,337 rows) into DuckDB. It independently wrote, executed, repaired,
-and submitted all three SQL transformations. The pinned evaluators
-returned Stage 1 = 1.0, Stage 2 = 1.0, and reward = 1.0. A subsequent
-credentialed Snowflake run submitted two files. The native evaluators
-recorded Stage 1 = 1.0, Stage 2 = 1/3, and warehouse reward = 0.566667.
-The trajectory timed out during the grading replay and recorded reward 0.
-The repaired runner completed native grading with Stage 1 = 1.0 and a best
-Stage 2 of 2/3. The native grade and trajectory reward agreed at 0.783333,
-and an offline training-data audit verified propagation of that real return
-with the original sampled tokens and log probabilities. The author output
-still needs a successful Snowflake submission.
-[Native grading evidence](evidence/books-snowflake-completion.md)
-[Timeout fix and dialect diagnostics](evidence/books-snowflake-deadlines.md)
-[Hosted submission evidence](evidence/books-full-baseline.md)
-[Design](DESIGN.md) [Latest credentialed evidence](evidence/books-snowflake-final.md)
-[Model and protocol evidence](evidence/books-model-readiness.md)
-[Final reproducibility and acceptance status](FINAL_HANDOFF.md)
-
-The later native attempt 004 started from the full-score TEXT-date
-rehearsal configuration and sampled a fresh trajectory. A Google Drive
-connector TLS failure led the agent to omit two raw streams. The native
-grader matched 13 of 15 tables, skipped Stage 2, and returned 0.303333.
-The same reward reached the sampled trajectory and offline training
-interface. The native full-score milestone remains open.
-[Attempt 004 evidence](evidence/books-snowflake-004.md)
-
-Native attempt 005 completed both stages after loading all 15 required
-streams and accepting an independent complete model submission. The
-publisher and customer outputs matched. The author output mismatched
-one title column, leaving Stage 2 at 2/3 and all recorded rewards at
-0.783333. Developer-only diagnostics on the TEXT-date mirror verified
-the unpriced-title failure and the corresponding feedback check.
-[Attempt 005 evidence](evidence/books-snowflake-005.md)
+[Implementation design](DESIGN.md) · [Technical report](TECHNICAL_REPORT.md) ·
+[Reproduction and handoff](FINAL_HANDOFF.md)

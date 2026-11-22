@@ -144,6 +144,13 @@ about $392 in trial allowance, and the dedicated monitor attached
 only to `ELT_BOOKS_WH`. The dedicated quota was raised from 5.00 to 6.00,
 retaining 90% immediate suspension and leaving about 2.11 compute
 credits before that threshold at the time of verification. Tinker
-showed $8.99 prepaid with auto-reload off. Native execution waits for
-an independent model-driven local full score and the fresh source
-preflight. No Snowflake workload was started for this continuation.
+showed $8.99 prepaid with auto-reload off.
+
+The next independent 35B run, `runs/books-publisher-008-hosted-validation/`,
+submitted all three files on turn 27. All 15 table counts and all three
+transformed outputs matched. Stage 1, Stage 2, and reward were 1.0.
+All 37 dispatched calls and saved artifact bytes matched the genuine
+model writes. It used 9,373 sampled, 139,392 cached prefill, and
+21,307 uncached prefill tokens, for a token-rate estimate of $0.034646385.
+The subsequent independent native launch also attained full marks.
+[Official Snowflake evidence](books-snowflake-007.md)
