@@ -15,11 +15,14 @@ warehouse. The audit matched the submitted files to the model's sampled
 actions, then verified reward propagation into offline Tinker training
 examples. [Native run and audit](evidence/books-snowflake-007.md)
 
-A separate Tinker pilot completed one real LoRA optimizer update using
-execution-derived SQLite rewards and verified the updated state and
-checkpoint. The pilot measured an update on a training datum. It did
-not evaluate downstream model performance.
-[Optimizer evidence](evidence/tinker-pilot.md)
+I also ran a separate on-policy training experiment on Books. A fresh rollout
+from a Qwen3.6-35B-A3B LoRA snapshot earned **1.0** on Snowflake. The verified
+reward drove one real Tinker optimizer step, with a post-update probe and
+checkpoint metadata confirming the update. The earlier SQLite pilot used
+group-relative rewards. These experiments verify the training loop and
+leave downstream performance unevaluated.
+[Official training evidence](evidence/books-official-training.md) ·
+[SQLite pilot](evidence/tinker-pilot.md)
 
 I also tested a small limitation of fixed-fixture grading. Changing
 synthetic order assignments and amounts left the data-derived pipeline

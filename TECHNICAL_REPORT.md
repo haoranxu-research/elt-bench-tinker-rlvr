@@ -1,12 +1,11 @@
 # Engineering an execution-graded ELT environment
 
-A useful reward had to answer two questions: could the submitted SQL rebuild
-the required warehouse tables from source, and did the resulting score reach
-the sampled trajectory? The project verified both in official Snowflake
-attempt 007. The separate live Tinker optimizer pilot used SQLite. The
-examples and evidence below distinguish scripted tests, archived replays,
-host-written controls, and fresh model rollouts. For the final test count
-and reproducible launch, see the [handoff](FINAL_HANDOFF.md).
+A useful reward had to show whether the submitted SQL could rebuild the
+warehouse from source. That score also had to reach the model's sampled
+trajectory and the optimizer. Attempt 007 verified the first two links
+on Snowflake. A separate on-policy run then completed the update from
+a new native Books reward. The [handoff](FINAL_HANDOFF.md) records the
+reproduction commands and offline test count.
 
 ## 1. Making the local loop testable
 
@@ -129,6 +128,24 @@ establishes full correctness for one independent rollout. The pilot
 establishes that the update executed. There was no downstream evaluation
 of learning or estimate of success rates across seeds.
 [Tinker pilot evidence](evidence/tinker-pilot.md)
+
+For the official-task update, a single native trajectory had no group
+variance. Sampling more trajectories would have required repeating the
+Airbyte load and Snowflake replay. The new mode instead uses a fixed
+zero baseline, so a verified reward supplies the action advantage directly.
+Offline reconstruction of runs 006 and 007 verified target and behavior
+log-probability alignment using the original sampled trajectories.
+
+The live update used a fresh pre-update LoRA snapshot of Qwen3.6-35B-A3B.
+The model submitted all three files on turn 40. Both official stages and
+both recorded rewards were **1.0**. The runner sent five training datums
+with **12,261** aligned targets, completed one `forward_backward` and
+one `optim_step`, and verified the changed training state and checkpoint.
+Metered token counts imply **$0.099822289** at published rates. The
+dedicated Snowflake monitor rose by approximately **0.71 credits**.
+This establishes that one fresh official execution supplied the reward
+for a genuine optimizer update.
+[Official training evidence, objective and costs](evidence/books-official-training.md)
 
 ## 7. Testing whether fixed-fixture reward survives input changes
 

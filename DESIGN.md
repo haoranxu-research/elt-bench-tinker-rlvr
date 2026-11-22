@@ -42,9 +42,19 @@ a group of rollout returns, it computes centered advantages and assembles
 training examples that mask prompt tokens out of the loss. The project
 checks that each training target and log probability matches its sampled
 action. A group with identical returns provides no update signal. The
-live LoRA pilot tested this path on SQLite rewards. The Snowflake run
-verified grading and reward alignment without training on that rollout.
-[Native run](evidence/books-snowflake-007.md) · [LoRA pilot](evidence/tinker-pilot.md)
+live SQLite pilot used this group-relative objective.
+
+The official training runner samples a single Books trajectory from
+the trainer's pre-update LoRA snapshot. Its fixed baseline is zero,
+so eligible action tokens receive the verified warehouse reward as
+their advantage. Tinker's importance-sampling loss compares the
+current token probability with its recorded sampling probability.
+The runner updates after both official stages run and the native
+receipt matches the trajectory return. It verifies the changed state
+and checkpoint after one optimizer step.
+[Official training run](evidence/books-official-training.md) ·
+[Earlier native evaluation](evidence/books-snowflake-007.md) ·
+[SQLite LoRA pilot](evidence/tinker-pilot.md)
 
 ## What varies across warehouses
 

@@ -10,9 +10,11 @@
 | Reward provenance | All 43 dispatched native calls matched sampled calls. The original 9,334 action tokens and log probabilities aligned with four offline Cookbook datums derived from the recorded reward. |
 | Native cleanup | Both transient databases and all run-owned Airbyte resources were gone. The dedicated X-Small warehouse was suspended. |
 | Genuine RL update | The separate SQLite pilot completed one live Tinker LoRA optimization step with post-update and checkpoint verification. |
+| Official Books RL update | A fresh on-policy Snowflake rollout earned 1.0 in both stages and returned 1.0 to Tinker. One optimizer step, a changed-state probe and checkpoint metadata were verified. |
 | Optional robustness | Three repetitions of an eight-case SQLite changed-input check verified detection of specific fixed-fixture faults. |
 
 [Native grading evidence](evidence/books-snowflake-007.md) ·
+[Official training evidence](evidence/books-official-training.md) ·
 [Tinker optimizer evidence](evidence/tinker-pilot.md) ·
 [Implementation design](DESIGN.md) · [Technical report](TECHNICAL_REPORT.md) ·
 [Professor-facing summary](PROFESSOR_SUMMARY.md)
@@ -28,14 +30,14 @@ in [README.md](README.md). From the repository root:
 .\.venv\Scripts\python.exe -m elt_rl.robustness --suite --repetitions 3
 ```
 
-The final full offline suite passed **130 tests in 53.95 seconds** with the
+The official-training regression suite passed **134 tests in 59.26 seconds** with the
 pinned Cookbook and provider, cached public Qwen tokenizer, and optional
 real renderer and local Terraform checks enabled. The verified Windows
 environment used CPU PyTorch from the base interpreter as described in
 the [integration setup](README.md#optional-integration-tests). Set
 `ELT_TEST_REAL_RENDERER=1` and `ELT_TEST_TERRAFORM` to the local Terraform
 executable to include those checks. The executed logs are in
-`runs/books-offline-readiness/goal-final-tests.txt` and
+`runs/books-offline-readiness/official-training-tests.txt` and
 `goal-final-sqlite.txt` in the same folder.
 [Optional experiment timings and limitations](evidence/changed-input-final.md)
 
@@ -82,6 +84,22 @@ entry had yet to post. The Snowflake preflight estimate was **0.75–1.10
 credits**. Numeric post-run credit use was not collected. Both the grading
 and run-scoped cleanup audits completed.
 [Native cost and resource record](evidence/books-snowflake-007.md)
+
+## Official Books training
+
+Use the same private setup as the native evaluation. This mode uses the
+verified Books 35B profile and one rank-16 LoRA policy snapshot. It checks
+both stage receipts and the trajectory return before a single update.
+The verified Windows invocation used the base site-packages launcher.
+
+```powershell
+.\.venv\Scripts\python.exe -c 'from pathlib import Path; import sys; sys.path.append(str(Path(sys.base_prefix)/""Lib""/""site-packages"")); from elt_rl.run import main; raise SystemExit(main())' train-official-one --books-max-turns 40 --rollout-seconds 2400 --grading-seconds 1500 --budget-usd 0.90 --model Qwen/Qwen3.6-35B-A3B --renderer qwen3_5_disable_thinking --allow-paid --allow-warehouse --out runs/books-official-training-reproduction
+```
+
+The run used **$0.099822289** at published rates based on metered tokens.
+The measured monitor delta was about **0.71 Snowflake credits**. Tinker
+had not posted session-level billing at the audit.
+[Official training receipts and cost details](evidence/books-official-training.md)
 
 ## Submission package
 

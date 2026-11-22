@@ -11,10 +11,11 @@ adapter for Airbyte and Snowflake. [Design](DESIGN.md) ·
 | Experiment | Result |
 | --- | --- |
 | Official Books on Snowflake | Qwen3.6-35B-A3B independently wrote, tested, and submitted all three SQL files. Airbyte loaded 15 tables and 84,337 rows. Both official stages, the warehouse reward, and the trajectory reward were **1.0**. [Native evidence](evidence/books-snowflake-007.md) |
+| Official Books on-policy training | A new native rollout from a rank-16 Qwen3.6-35B-A3B LoRA snapshot earned **1.0**. Tinker completed and verified one optimizer step on that reward. [Official training evidence](evidence/books-official-training.md) |
 | Separate live Tinker pilot | One rank-16 LoRA optimizer step completed on SQLite rewards, with a post-update probe and checkpoint verification. [Training evidence](evidence/tinker-pilot.md) |
 | Synthetic changed-input replay | The data-derived pipeline stayed at **1.0**. A hard-coded pipeline fell from **1.0 to 0.35**. [Experiment results](evidence/changed-input-final.md) |
 
-The final full offline suite passed **130 tests** with the optional renderer
+The full offline suite passed **134 tests** with the optional renderer
 and Terraform checks enabled. Evidence files from earlier attempts record
 their own test counts and readiness status. Use the handoff for final
 verification and the exact native launch. [Final handoff](FINAL_HANDOFF.md)
@@ -110,6 +111,9 @@ download endpoint is unavailable.
 - **Tinker LoRA pilot:** Use the [pilot setup and command](LIVE_SETUP.md#tinker-pilot)
   to reproduce the optimizer experiment with SQLite. Its reported update is
   separate from native Books grading.
+- **Official Books training:** Use the [native training command](FINAL_HANDOFF.md#official-books-training)
+  to sample and grade a fresh Books rollout and update its LoRA trainer once
+  from a verified reward.
 
 Both live workflows require explicitly authorized resources. Keep private
 configuration and raw artifacts outside Git. Use `.env.example` for variable
