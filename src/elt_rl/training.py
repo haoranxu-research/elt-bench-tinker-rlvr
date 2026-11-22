@@ -11,6 +11,7 @@ from pathlib import Path
 from time import monotonic
 
 import tinker
+import torch
 from tinker.lib.base_url import DEFAULT_BASE_URL
 from tinker.lib.retry_handler import RetryConfig
 from tinker_cookbook.completers import TinkerTokenCompleter
@@ -19,7 +20,7 @@ from tinker_cookbook.rl.rollouts import do_group_rollout
 from tinker_cookbook.rl.types import PARSE_ERROR_MASKED_METRIC_KEY, TrajectoryGroup
 from tinker_cookbook.utils.cost_estimation import TokenCostRates, TokenUsage, fetch_model_pricing
 
-from .contracts import LORA_RANK, PILOT_BUDGET, EpisodeConfig, TaskDefinition, TokenBudget
+from .contracts import LORA_RANK, PILOT_BUDGET, EpisodeConfig, Grade, TaskDefinition, TokenBudget
 from .cookbook import BooksRollout, ELTDataset, ELTGroupBuilder, finalization_renderer, submission_call_tokens
 from .rendering import QWEN_TOKENIZER_REVISIONS, make_renderer
 from .settings import DEFAULT_RENDERER, ConfigurationError
@@ -27,6 +28,7 @@ from .tinker_once import single_attempt_sdk
 
 COOKBOOK_SHA = "28de41edfcdd07ba3e7980f35d53a586024a2184"
 LOSS = "importance_sampling"
+OFFICIAL_BASELINE = 0.0
 
 
 @dataclass
@@ -56,13 +58,20 @@ class RecordedTokenCompleter(TinkerTokenCompleter):
         return sample
 
 
-def datums_for_group(group: TrajectoryGroup, *, require_provenance: bool = False) -> list[tinker.Datum]:
+def datums_for_group(group: TrajectoryGroup, *, require_provenance: bool = False,
+                     fixed_baseline: float | None = None) -> list[tinker.Datum]:
     rewards = group.get_total_rewards()
-    # Cookbook's standalone filter preserves a fallback constant group.
-    if len(set(rewards)) < 2:
-        return []
-    groups = [group]
-    (advantages,) = compute_advantages(groups)
+    if fixed_baseline is None:
+        # Cookbook's standalone filter preserves a fallback constant group.
+        if len(set(rewards)) < 2:
+            return []
+        (advantages,) = compute_advantages([group])
+    else:
+        if len(rewards) != 1 or not all(map(math.isfinite, (fixed_baseline, *rewards))):
+            raise ValueError("fixed-baseline training requires one trajectory and finite returns")
+        if rewards[0] == fixed_baseline:
+            return []
+        advantages = torch.tensor([rewards[0] - fixed_baseline], dtype=torch.float32)
     # Runner stops can add synthetic transitions carrying reward/metrics
     # without a sampled action. Preserve their reward in the advantage,
     # while keeping their unsampled observation out of training provenance.
@@ -107,6 +116,31 @@ def datums_for_group(group: TrajectoryGroup, *, require_provenance: bool = False
             raise RuntimeError("training targets do not match the recorded sampled actions")
         selected.extend(chosen)
     return selected
+
+
+def verified_official_training_reward(group: TrajectoryGroup, out: Path) -> float:
+    """Require a sampled submission and agreement with both native grading receipts."""
+    (trajectory,) = group.trajectories_G
+    if any((out / "official").glob("*/cleanup-required.txt")):
+        raise ValueError("cleanup_required")
+    last = trajectory.transitions[-1] if trajectory.transitions else None
+    if (last is None or not last.episode_done or not last.ac.tokens
+        or not last.metrics.get("submission_accepted") or not last.metrics.get("grading/completed")):
+        raise ValueError("no_completed_sampled_submission")
+    native = list((out / "official").glob("*/grade.json"))
+    terminal = list((out / "pipelines").glob("*.grade.json"))
+    if len(native) != 1 or len(terminal) != 1:
+        raise ValueError("missing_or_ambiguous_official_grade")
+    warehouse, receipt = (json.loads(path.read_bytes()) for path in (native[0], terminal[0]))
+    stage1, stage2 = receipt["stage1"], receipt["stage2"]
+    grade = Grade(stage1, stage2, bool(receipt["stage2_ran"]), bool(receipt["submitted"]))
+    if (warehouse.get("task") != "books" or stage1 != 1.0 or not 0.0 <= stage2 <= 1.0
+        or not grade.submitted or not grade.stage2_ran or grade.reward <= 0
+        or any(receipt.get(key) != val or warehouse.get(key) != val or last.metrics.get(key) != val
+               for key, val in grade.metrics().items())
+        or not warehouse["reward"] == receipt["reward"] == last.reward == group.get_total_rewards()[0] == grade.reward):
+        raise ValueError("official_grade_mismatch_or_incomplete")
+    return grade.reward
 
 
 def estimated_bound(prices: TokenCostRates, config: EpisodeConfig, budget: TokenBudget,
@@ -191,9 +225,9 @@ async def optimize_once(training_client: tinker.TrainingClient, datums: list[tin
         raise ValueError("training requires nonempty datums")
     send = [replace(datum, loss_fn_inputs={key: value for key, value in datum.loss_fn_inputs.items()
                                            if key != "mask"}) for datum in datums]
-    forward_future = training_client.forward_backward(send, LOSS)
-    record(forward_backward={"status": "submitted", "request_input_tokens": sum(d.model_input.length for d in send)})
     try:
+        forward_future = training_client.forward_backward(send, LOSS)
+        record(forward_backward={"status": "submitted", "request_input_tokens": sum(d.model_input.length for d in send)})
         async with asyncio.timeout(180):
             forward = await forward_future
         if len(forward.loss_fn_outputs) != len(send):
@@ -207,11 +241,11 @@ async def optimize_once(training_client: tinker.TrainingClient, datums: list[tin
                              "result_count": len(forward.loss_fn_outputs),
                              "request_input_tokens": sum(d.model_input.length for d in send)})
     # Await valid gradients before submitting the only paid optimizer request.
-    optim_future = training_client.optim_step(tinker.AdamParams(
-        learning_rate=4e-5, beta1=0.9, beta2=0.95, eps=1e-8,
-    ))
-    record(optim_step={"status": "submitted"})
     try:
+        optim_future = training_client.optim_step(tinker.AdamParams(
+            learning_rate=4e-5, beta1=0.9, beta2=0.95, eps=1e-8,
+        ))
+        record(optim_step={"status": "submitted"})
         async with asyncio.timeout(180):
             optimizer = await optim_future
     except Exception as exc:
@@ -250,7 +284,8 @@ async def run_remote(
     *, api_key: str, project_id: str | None = None, seed: int = 0,
     token_budget: TokenBudget | None = None, preflight_only: bool = False,
 ) -> int:
-    train = mode == "train-one"
+    official_train = mode == "train-official-one"
+    train = official_train or mode == "train-one"
     budget = token_budget or (PILOT_BUDGET if train else TokenBudget())
     prices = await asyncio.to_thread(fetch_model_pricing, model, timeout=25.0)
     if prices is None:
@@ -272,7 +307,7 @@ async def run_remote(
            spending_limit_usd=max_usd, actual_spend_usd=None, balance_pre=None, balance_post=None)
     renderer = make_renderer(model, renderer_name, offline=True)
     reserve = 0
-    if not train and task.partial_transforms:
+    if task.partial_transforms and (not train or official_train):
         closing_renderer = finalization_renderer(renderer)
         sizes = {mode: len(submission_call_tokens(closing_renderer, mode)) for mode in ("complete", "partial")}
         reserve = 2 * max(sizes.values())
@@ -282,12 +317,12 @@ async def run_remote(
     rest = tinker.RestClient(api_key=api_key, base_url=DEFAULT_BASE_URL)
     capabilities = await rest.get_server_capabilities()
     supported = next((item for item in capabilities.supported_models if item.model_name == model), None)
-    if supported is None or supported.sampleable is False or (train and supported.trainable is False):
+    if supported is None or supported.sampleable is False or (train and supported.trainable is not True):
         raise ConfigurationError("configured Tinker project does not support this model for the requested action")
     if supported.max_context_length and supported.max_context_length < budget.context:
         raise ConfigurationError("model context length is smaller than the rollout budget")
     if preflight_only:
-        record(status="read_only_preflight_passed", sampleable=supported.sampleable,
+        record(status="read_only_preflight_passed", sampleable=supported.sampleable, trainable=supported.trainable,
                max_context_length=supported.max_context_length, session_creation="not_started")
         print(f"Read-only preflight passed for {model}. Estimated uncached token bound: USD {estimate:.8f}.")
         return 0
@@ -307,10 +342,14 @@ async def run_remote(
                 base_model=model, retry_config=RetryConfig(enable_retry_logic=False),
             )
             record(session_url=service.get_console_url(), session_creation="completed")
+        temperature = 1.0 if official_train else 0.8
+        if official_train:
+            record(behavior_policy="pre_update_lora_snapshot", temperature=temperature,
+                   advantage_baseline=OFFICIAL_BASELINE, advantage_method="fixed_baseline")
         policy = RecordedTokenCompleter(sampling_client, max_tokens=budget.per_turn,
-                                        temperature=0.8, context_window=budget.context,
+                                        temperature=temperature, context_window=budget.context,
                                         trace_file=out / "sampled-actions.jsonl",
-                                        prompt_trace_file=None if train else out / "prompt-inputs.jsonl")
+                                        prompt_trace_file=None if train and not official_train else out / "prompt-inputs.jsonl")
         dataset = ELTDataset(ELTGroupBuilder(
             config, renderer, members, task_factory=lambda: task, budget=budget, evidence_dir=out / "pipelines",
             submission_reserve=reserve,
@@ -321,9 +360,7 @@ async def run_remote(
         evidence = group_evidence(group)
         record(sampling="completed", rewards=group.get_total_rewards(), trajectories=evidence,
                sampled_actions_verified=True)
-        datums = datums_for_group(group, require_provenance=True) if train else []
-        usage = observed_usage(evidence, datums)
-        sample_usage = replace(usage, trained=0) if train else sampled_receipt_usage(out / "sampled-actions.jsonl")
+        sample_usage = sampled_receipt_usage(out / "sampled-actions.jsonl")
         record(sampling_token_usage=asdict(sample_usage), estimated_sampling_usd=prices.estimate_usd(sample_usage))
         if not train:
             submitted = any(turn["metrics"].get("submitted", 0) for item in evidence for turn in item["turns"])
@@ -354,6 +391,16 @@ async def run_remote(
                 status = "rollout_grading_failed"
             record(status=status, submitted=submitted)
             return 0 if submitted else 2
+        if official_train:
+            try:
+                reward = verified_official_training_reward(group, out)
+            except ValueError as exc:
+                record(status="no_verified_training_reward", training_reward_status=str(exc))
+                return 2
+            record(verified_warehouse_reward=reward, advantage_values=[reward - OFFICIAL_BASELINE])
+        datums = datums_for_group(group, require_provenance=True,
+                                 fixed_baseline=OFFICIAL_BASELINE if official_train else None)
+        usage = observed_usage(evidence, datums)
         record(training_datum_count=len(datums), planned_training_input_tokens=usage.trained,
                **alignment_evidence(datums))
         if not datums:
@@ -366,7 +413,18 @@ async def run_remote(
                 raise RuntimeError("saved checkpoint metadata differs from the expected model or LoRA rank")
             return {"base_model": weights.base_model, "lora_rank": weights.lora_rank}
 
-        verified = await optimize_once(training_client, datums, record, inspect_checkpoint=inspect_checkpoint)
+        training_receipts = {}
+
+        def record_training(**updates: object) -> None:
+            training_receipts.update(updates)
+            record(**updates)
+
+        verified = await optimize_once(training_client, datums, record_training, inspect_checkpoint=inspect_checkpoint)
+        backward_tokens = training_receipts["forward_backward"]["request_input_tokens"]
+        probe_tokens = training_receipts["updated_state"].get("verification_input_tokens", 0)
+        total_usage = replace(sample_usage, trained=backward_tokens + probe_tokens)
+        record(training_token_usage={"forward_backward": backward_tokens, "verification_forward": probe_tokens},
+               estimated_total_usd=prices.estimate_usd(total_usage))
         record(status="checkpoint_saved" if verified else "checkpoint_saved_state_unverified",
                post_training_evaluation=False)
         return 0 if verified else 2

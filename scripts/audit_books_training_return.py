@@ -10,7 +10,7 @@ from tinker_cookbook.rl.types import Trajectory, TrajectoryGroup, Transition
 
 from elt_rl.official import _pack_grade, check_checkout
 from elt_rl.rendering import make_renderer
-from elt_rl.training import alignment_evidence, datums_for_group
+from elt_rl.training import OFFICIAL_BASELINE, alignment_evidence, datums_for_group, verified_official_training_reward
 
 
 def read_jsonl(path: Path) -> list[dict]:
@@ -19,10 +19,11 @@ def read_jsonl(path: Path) -> list[dict]:
 
 def audit(run: Path, local_checkout: Path | None = None) -> dict:
     manifest = json.loads((run / "manifest.json").read_bytes())
+    official = manifest["mode"] in {"official-rollout", "train-official-one"}
     (recorded,) = manifest["trajectories"]
     (submission_path,) = (run / "pipelines").glob("*.submission.json")
     submission = json.loads(submission_path.read_bytes())
-    if manifest["mode"] == "official-rollout":
+    if official:
         (receipt_path,) = (run / "pipelines").glob("*.grade.json")
         receipt = json.loads(receipt_path.read_bytes())
     elif local_checkout is not None:
@@ -39,7 +40,7 @@ def audit(run: Path, local_checkout: Path | None = None) -> dict:
     reward = receipt["reward"]
     if reward != recorded["reward"] or manifest["rewards"] != [reward] or not receipt["submitted"]:
         raise ValueError("the recorded return and submission grade disagree")
-    if manifest["mode"] == "official-rollout":
+    if official:
         (native_grade_path,) = (run / "official").glob("*/grade.json")
         native_grade = json.loads(native_grade_path.read_bytes())
         if any(native_grade[name] != value for name, value in receipt.items()):
@@ -70,14 +71,14 @@ def audit(run: Path, local_checkout: Path | None = None) -> dict:
     if singleton.get_total_rewards() != [reward] or datums_for_group(singleton, require_provenance=True):
         raise ValueError("unpaired Books trajectory has an invalid return or training signal")
 
-    # The empty zero-return control only supplies a baseline for an offline
-    # check. It contributes no sampled actions and no optimization is run.
-    paired = TrajectoryGroup([actual, Trajectory([], empty)], [0.0, 0.0], [{}, {}])
-    datums = datums_for_group(paired, require_provenance=True)
+    if official and verified_official_training_reward(singleton, run) != reward:
+        raise ValueError("the official training gate returned a different reward")
+    datums = datums_for_group(singleton, require_provenance=True, fixed_baseline=OFFICIAL_BASELINE)
     if reward and not datums:
         raise ValueError("the graded sample did not produce any aligned training datums")
     return {"warehouse": manifest["mode"], "grade": receipt,
-            "submitted_files": submission["transforms"], "training_interface_returns": paired.get_total_rewards(),
+            "submitted_files": submission["transforms"], "training_interface_returns": singleton.get_total_rewards(),
+            "fixed_baseline": OFFICIAL_BASELINE, "advantage": reward - OFFICIAL_BASELINE,
             "offline_datum_count": len(datums), "optimization_executed": False,
             **alignment_evidence(datums)}
 
@@ -88,7 +89,7 @@ def main() -> None:
     parser.add_argument("--local-checkout", type=Path)
     args = parser.parse_args()
     evidence = json.dumps(audit(args.run, args.local_checkout), indent=2) + "\n"
-    (args.run / "training-return-audit.json").write_text(evidence, encoding="utf-8")
+    (args.run / "fixed-baseline-audit.json").write_text(evidence, encoding="utf-8")
     print(evidence, end="")
 
 

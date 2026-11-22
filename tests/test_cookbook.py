@@ -233,7 +233,7 @@ def test_books_submission_reserve_keeps_one_explicit_action(tmp_path, boundary, 
         assert trajectory.transitions[-2].logs["tool_calls_skipped_for_submission"] == 1
 
 
-@pytest.mark.parametrize("outcome", ["completed", "timed_out", "shared_deadline", "late", "failed"])
+@pytest.mark.parametrize("outcome", ["completed", "timed_out", "shared_deadline", "late", "failed", "unsubmitted"])
 def test_books_grading_reconciles_only_an_on_time_sampled_submission(tmp_path, monkeypatch, outcome):
     from time import sleep
 
@@ -241,7 +241,7 @@ def test_books_grading_reconciles_only_an_on_time_sampled_submission(tmp_path, m
     from tinker_cookbook.rl.rollouts import do_group_rollout
     from elt_rl.contracts import Grade, PipelineError
     from elt_rl.cookbook import BooksRollout, submission_call_tokens
-    from elt_rl.training import datums_for_group
+    from elt_rl.training import OFFICIAL_BASELINE, datums_for_group, verified_official_training_reward
 
     base = local_task()
     grading_calls = []
@@ -262,7 +262,7 @@ def test_books_grading_reconciles_only_an_on_time_sampled_submission(tmp_path, m
     reserve = 2 * max(len(submission), len(submission_call_tokens(renderer, "partial")))
     actions = [json.loads(line) for line in TRACE.read_text(encoding="utf-8").splitlines()]
     batches = [list(json.dumps(batch).encode()) for batch in (actions[:3], [actions[3], actions[6], actions[7]])]
-    evidence = tmp_path / "evidence"
+    evidence = tmp_path / "pipelines"
     evidence.mkdir()
     config = EpisodeConfig(tmp_path / "work", max_turns=3, max_tool_calls=12,
                            rollout_seconds=0.7 if outcome in {"completed", "shared_deadline"} else 5,
@@ -284,26 +284,58 @@ def test_books_grading_reconciles_only_an_on_time_sampled_submission(tmp_path, m
 
     builder = ELTGroupBuilder(config, renderer, 1, task_factory=lambda: task, evidence_dir=evidence,
                               submission_reserve=reserve)
-    group = asyncio.run(rollout(builder, submission))
+    final = list(b"[]") if outcome == "unsubmitted" else submission
+    group = asyncio.run(rollout(builder, final))
     last = group.trajectories_G[0].transitions[-1]
-    assert last.ac.tokens == submission
-    assert last.ac.logprobs == [-0.25] * len(submission)
+    assert last.ac.tokens == final
+    assert last.ac.logprobs == [-0.25] * len(final)
     assert last.ac.sequence_id == "sample"
     assert last.episode_done
     assert not list(config.work_root.iterdir())
-    assert len(grading_calls) == (outcome != "late")
+    assert len(grading_calls) == (outcome not in {"late", "unsubmitted"})
     if outcome == "late":
         assert "agent action deadline expired" in last.logs["tool_result_0"]
         assert not last.metrics.get("submission_accepted")
-    else:
+    elif outcome != "unsubmitted":
         status = "timed_out" if outcome == "shared_deadline" else outcome
         assert last.metrics["submission_accepted"] == last.metrics[f"grading/{status}"] == 1
     expected = Grade(1, 1 / 3, stage2_ran=True, submitted=True).reward if outcome == "completed" else 0
     assert group.get_total_rewards() == [expected]
     assert last.reward == expected
     assert bool(list(evidence.glob("*.grade.json"))) == (outcome == "completed")
+    fixed = datums_for_group(group, require_provenance=True, fixed_baseline=OFFICIAL_BASELINE)
+    if outcome != "completed":
+        assert fixed == []
+        with pytest.raises(ValueError, match="no_completed_sampled_submission"):
+            verified_official_training_reward(group, tmp_path)
 
     if outcome == "completed":
+        with pytest.raises(ValueError, match="missing_or_ambiguous_official_grade"):
+            verified_official_training_reward(group, tmp_path)
+        native = tmp_path / "official" / "replay"
+        native.mkdir(parents=True)
+        receipt = json.loads(next(evidence.glob("*.grade.json")).read_bytes())
+        (native / "grade.json").write_text(json.dumps({"task": "books", **receipt}), encoding="utf-8")
+        assert verified_official_training_reward(group, tmp_path) == expected
+        (native / "cleanup-required.txt").touch()
+        with pytest.raises(ValueError, match="cleanup_required"):
+            verified_official_training_reward(group, tmp_path)
+        (native / "cleanup-required.txt").unlink()
+        (native / "grade.json").write_text(json.dumps({"task": "books", **receipt, "reward": 0.0}), encoding="utf-8")
+        with pytest.raises(ValueError, match="official_grade_mismatch_or_incomplete"):
+            verified_official_training_reward(group, tmp_path)
+        aligned = []
+        for datum in fixed:
+            fields = datum.loss_fn_inputs
+            for token, logprob, advantage, mask in zip(*(fields[key].data for key in
+                    ("target_tokens", "logprobs", "advantages", "mask")), strict=True):
+                if mask:
+                    assert advantage == pytest.approx(expected)
+                    aligned.append((token, logprob))
+                else:
+                    assert advantage == 0
+        assert [token for token, _ in aligned] == [token for response in [*batches, final] for token in response]
+        assert all(logprob == -0.25 for _, logprob in aligned)
         failed_builder = ELTGroupBuilder(config, renderer, 1, task_factory=lambda: task, submission_reserve=reserve)
         failed = asyncio.run(rollout(failed_builder, list(b"[]")))
         combined = replace(group, trajectories_G=[*group.trajectories_G, *failed.trajectories_G],
@@ -595,6 +627,25 @@ def test_cookbook_rollouts_produce_real_advantages_and_datums(tmp_path):
         result.clear()
         assert not await optimize_once(StaticWeights(), datums, lambda **fields: result.update(fields))
         assert result["updated_state"]["status"] == "inconclusive"
+
+        class BrokenOptimizer(FakeTrainingClient):
+            async def optim_step(self, params):
+                raise OSError("synthetic optimizer failure")
+
+        calls.clear()
+        result.clear()
+        with pytest.raises(OSError):
+            await optimize_once(BrokenOptimizer(), datums, lambda **fields: result.update(fields))
+        assert calls == ["forward_backward"]
+        assert result["optim_step"]["status"] == "failed_or_unconfirmed"
+
+        async def wrong_checkpoint(_):
+            raise RuntimeError("synthetic metadata mismatch")
+
+        result.clear()
+        assert not await optimize_once(FakeTrainingClient(), datums, lambda **fields: result.update(fields),
+                                       inspect_checkpoint=wrong_checkpoint)
+        assert result["checkpoint_verification"]["status"] == "unverified"
 
     asyncio.run(run())
 

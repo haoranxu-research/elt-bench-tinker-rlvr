@@ -336,7 +336,7 @@ class BooksTokenEnv(ELTTokenEnv):
 
 
 class BooksRollout(RolloutStrategy):
-    """Run one sampling-only episode with the host's submission budget."""
+    """Run and grade one Books episode with the host's submission budget."""
 
     async def execute(self, env_group_builder, policy: TokenCompleter) -> RolloutResult:
         env, = await env_group_builder.make_envs()

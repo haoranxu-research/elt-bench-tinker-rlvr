@@ -23,6 +23,9 @@ def test_baseline_vs_changed_input(tmp_path, trace, replay):
 
 @pytest.mark.parametrize(("mode", "approval"), [
     ("official-rollout", ["--allow-paid"]),
+    ("train-official-one", ["--allow-paid"]),
+    ("train-official-one", ["--allow-warehouse"]),
+    ("train-official-one", ["--allow-paid", "--allow-warehouse"]),
     ("train-one", []),
     ("train-one", ["--allow-paid"]),
 ])
